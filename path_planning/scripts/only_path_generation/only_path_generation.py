@@ -1,12 +1,21 @@
+# ====================================================================================================
 import numpy as np
 import roboticstoolbox as rtb
 import swift
+# ====================================================================================================
 from spatialmath import SE3
 from spatialmath.base import q2r
 import spatialmath.base as smb
 from spatialgeometry import Box, Cylinder
+# ====================================================================================================
+from model_generation import create_cylinder, make_cylinder_half_query
+from path_generation import generate_path
+# ====================================================================================================
 
-from test_path_generation import generate_path
+
+
+
+
 
 
 # =========================
@@ -23,36 +32,17 @@ env.launch(realtime=True)
 # =========================
 # 1) 모델 생성
 # =========================
-# 박스 크기(가로 x, 세로 y, 높이 z)
 cyl_radius = 0.25
 cyl_length = 0.50  # z축 방향 길이로 취급(대부분의 구현이 z축 길이)
 cyl_pose = SE3(0.5, 0.0, 0.25)  # 중심 위치
 
-cyl = Cylinder(radius=cyl_radius, length=cyl_length, pose=cyl_pose)
-env.add(cyl)
-
+cyl, cyl_meta = create_cylinder(env, cyl_radius, cyl_length, cyl_pose)
 
 # =========================
 # 2) "표면 데이터" 만들기: 샘플링해서 point cloud로
 # =========================
-# 박스 윗면 z는 (박스 중심 z + 높이/2)
-def make_cylinder_half_query(center_xyz, radius, theta_min, theta_max):
-    cx, cy, _ = center_xyz
-    # u = 호길이(0..R*(theta_max-theta_min)), v = z
-    def query(u, v):
-        theta = theta_min + u / radius
-        theta = np.clip(theta, theta_min, theta_max)
-        x = cx + radius*np.cos(theta)
-        y = cy + radius*np.sin(theta)
-        z = v
-        p_surf = np.array([x,y,z], float)
-        n = np.array([np.cos(theta), np.sin(theta), 0.0], float)
-        return p_surf, n
-    return query
-
-cx, cy, cz = cyl_pose.t
-z_top = cz + cyl_length / 2.0
-z_bot = cz - cyl_length / 2.0
+cx, cy, cz = cyl_meta["cx"], cyl_meta["cy"], cyl_meta["cz"]
+z_top, z_bot = cyl_meta["z_top"], cyl_meta["z_bot"]
 
 theta_min, theta_max = -np.pi/2, np.pi/2
 u_min, u_max = 0.0, cyl_radius*(theta_max-theta_min)
@@ -123,6 +113,9 @@ for row in rows:
     add_polyline_as_cylinders(env, row, radius=0.002, color=(1,0,0))
 
 
+# =========================
+# 루프
+# =========================
 # 카메라/업데이트 루프는 네 환경에 맞게
 while True:
     env.step(0.02)
