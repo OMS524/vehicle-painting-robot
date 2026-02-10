@@ -1,0 +1,6 @@
+[submodule "doosan-robot2"]
+	path = doosan-robot2
+	url = https://github.com/DoosanRobotics/doosan-robot2.git
+[submodule "robotics-toolbox-python"]
+	path = robotics-toolbox-python
+	url = https://github.com/petercorke/robotics-toolbox-python.git
