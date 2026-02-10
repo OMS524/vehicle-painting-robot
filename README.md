@@ -3,7 +3,7 @@
 ```bash
 git status
 git add .
-git commit -m "push"
+git commit -m "Update project files"
 git push origin main
 ```
 > [!NOTE]
@@ -12,11 +12,14 @@ git push origin main
 > git push origin main
 > ```
 > ```bash
-> Username for 'https://github.com': OMS524
-> Password for 'https://OMS524@github.com': `PAT`
+> Username for 'https://github.com': <YOUR_GITHUB_USERNAME>
+> Password for 'https://OMS524@github.com': <PAT>
 > ```
+
+---
 
 ## Git Pull
 ```bash
 git pull --rebase
+git submodule update --init --recursive
 ```
