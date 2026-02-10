@@ -16,3 +16,7 @@ git push origin main
 > Password for 'https://OMS524@github.com': `PAT`
 > ```
 
+## Git Pull
+```bash
+git pull --rebase
+```
