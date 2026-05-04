@@ -1,0 +1,1 @@
+"""Paint trajectory generation modules."""
