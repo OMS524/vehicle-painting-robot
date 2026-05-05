@@ -18,14 +18,14 @@ class Waypoint:
 
 
 @dataclass(slots=True)
-class Trajectory:
+class Path:
     waypoints: list[Waypoint] = field(default_factory=list)
 
 
 @dataclass(slots=True)
-class PaintTrajectory:
+class PaintPath:
     frame_id: str
-    trajectories: list[Trajectory] = field(default_factory=list)
+    paths: list[Path] = field(default_factory=list)
 
 
 def _as_vec3(values) -> Vec3:
@@ -84,7 +84,7 @@ def _ordered_row_indices(paint_spline_result, row_count: int) -> list[int]:
     )
 
 
-def structure_paint_trajectory(
+def structure_paint_path(
     paint_spline_result,
     frame_id="world",
     raster_zigzag=None,
@@ -99,9 +99,9 @@ def structure_paint_trajectory(
     paint_mask_rows = list(paint_spline_result.get("paint_spline_paint_mask_rows", []))
     time_rows = list(paint_spline_result.get("paint_spline_time_rows", []))
 
-    trajectories = []
+    paths = []
     row_count = min(len(rows), len(orientation_rows), len(paint_mask_rows))
-    for trajectory_index, row_index in enumerate(
+    for path_index, row_index in enumerate(
         _ordered_row_indices(paint_spline_result, row_count)
     ):
         row = rows[row_index]
@@ -125,7 +125,7 @@ def structure_paint_trajectory(
             times = np.zeros(len(points), dtype=float)
         times = times - float(times[0])
         times = np.maximum.accumulate(times)
-        if bool(raster_zigzag) and trajectory_index % 2 == 1:
+        if bool(raster_zigzag) and path_index % 2 == 1:
             points = points[::-1]
             orientations = orientations[::-1]
             paint_mask = paint_mask[::-1]
@@ -145,20 +145,20 @@ def structure_paint_trajectory(
                 times,
             )
         ]
-        trajectories.append(Trajectory(waypoints=waypoints))
+        paths.append(Path(waypoints=waypoints))
 
-    paint_trajectory = PaintTrajectory(
+    paint_path = PaintPath(
         frame_id=str(frame_id),
-        trajectories=trajectories,
+        paths=paths,
     )
-    return paint_trajectory
+    return paint_path
 
 
 __all__ = [
     "Vec3",
     "Quat",
     "Waypoint",
-    "Trajectory",
-    "PaintTrajectory",
-    "structure_paint_trajectory",
+    "Path",
+    "PaintPath",
+    "structure_paint_path",
 ]

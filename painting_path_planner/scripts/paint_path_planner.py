@@ -10,15 +10,15 @@ import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
-PROJECT_NAME = "painting_trajectory_planner"
+PROJECT_NAME = "painting_path_planner"
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from paint_trajectory_planner_1_surface_spline_extraction import generate_surface_spline_rows
-from paint_trajectory_planner_2_correction import correct_surface_spline_rows
-from paint_trajectory_planner_3_offset import generate_offset_rows
-from paint_trajectory_planner_4_spline import generate_paint_spline_rows
-from paint_trajectory_planner_5_structuring import structure_paint_trajectory
+from paint_path_planner_1_surface_spline_extraction import generate_surface_spline_rows
+from paint_path_planner_2_correction import correct_surface_spline_rows
+from paint_path_planner_3_offset import generate_offset_rows
+from paint_path_planner_4_spline import generate_paint_spline_rows
+from paint_path_planner_5_structuring import structure_paint_path
 
 
 @dataclass
@@ -172,8 +172,8 @@ class StructuringConfig:
     raster_zigzag: bool = True
     save_csv: bool = True
     csv_output_dir: str = ""
-    paint_trajectory_csv_name: str = "paint_trajectory.csv"
-    trajectory_csv_name_format: str = "trajectory_{trajectory_index:03d}.csv"
+    paint_path_csv_name: str = "paint_path.csv"
+    path_csv_name_format: str = "path_{path_index:03d}.csv"
 
     @classmethod
     def from_dict(cls, data=None):
@@ -344,8 +344,8 @@ def _resolve_paint_path_config(config=None, config_path=None, overrides=None):
     return PaintPathConfig.from_dict(config, overrides=overrides)
 
 
-PAINT_TRAJECTORY_CSV_HEADER = [
-    "trajectory_index",
+PAINT_PATH_CSV_HEADER = [
+    "path_index",
     "waypoint_index",
     "frame_id",
     "position_x",
@@ -379,17 +379,17 @@ def _csv_name(name, default):
     return value
 
 
-def _trajectory_csv_name(template, trajectory_index):
+def _path_csv_name(template, path_index):
     name_template = _csv_name(
         template,
-        "trajectory_{trajectory_index:03d}.csv",
+        "path_{path_index:03d}.csv",
     )
     try:
         return name_template.format(
-            trajectory_index=int(trajectory_index),
-            trajectory_number=int(trajectory_index) + 1,
-            index=int(trajectory_index),
-            number=int(trajectory_index) + 1,
+            path_index=int(path_index),
+            path_number=int(path_index) + 1,
+            index=int(path_index),
+            number=int(path_index) + 1,
         )
     except (IndexError, KeyError, ValueError):
         return name_template
@@ -411,11 +411,11 @@ def _unique_csv_path(path, used_paths):
         suffix += 1
 
 
-def _csv_row(frame_id, trajectory_index, waypoint_index, waypoint):
+def _csv_row(frame_id, path_index, waypoint_index, waypoint):
     position = list(getattr(waypoint, "position", (0.0, 0.0, 0.0)))
     orientation = list(getattr(waypoint, "orientation", (0.0, 0.0, 0.0, 1.0)))
     return [
-        int(trajectory_index),
+        int(path_index),
         int(waypoint_index),
         str(frame_id),
         float(position[0]),
@@ -436,55 +436,55 @@ def _write_csv(path, rows):
         os.makedirs(directory, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
-        writer.writerow(PAINT_TRAJECTORY_CSV_HEADER)
+        writer.writerow(PAINT_PATH_CSV_HEADER)
         writer.writerows(rows)
 
 
-def save_paint_trajectory_csv_files(
-    paint_trajectory,
+def save_paint_path_csv_files(
+    paint_path,
     csv_output_dir="",
-    paint_trajectory_csv_name="paint_trajectory.csv",
-    trajectory_csv_name_format="trajectory_{trajectory_index:03d}.csv",
+    paint_path_csv_name="paint_path.csv",
+    path_csv_name_format="path_{path_index:03d}.csv",
 ):
     output_dir = _resolve_csv_output_dir(csv_output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    frame_id = str(getattr(paint_trajectory, "frame_id", ""))
-    trajectories = list(getattr(paint_trajectory, "trajectories", []))
+    frame_id = str(getattr(paint_path, "frame_id", ""))
+    paths = list(getattr(paint_path, "paths", []))
     all_rows = []
-    trajectory_paths = []
+    path_csv_paths = []
     used_paths = set()
 
     full_path = _unique_csv_path(
         os.path.join(
             output_dir,
-            _csv_name(paint_trajectory_csv_name, "paint_trajectory.csv"),
+            _csv_name(paint_path_csv_name, "paint_path.csv"),
         ),
         used_paths,
     )
 
-    for trajectory_index, trajectory in enumerate(trajectories):
-        waypoints = list(getattr(trajectory, "waypoints", []))
+    for path_index, path_entry in enumerate(paths):
+        waypoints = list(getattr(path_entry, "waypoints", []))
         rows = [
-            _csv_row(frame_id, trajectory_index, waypoint_index, waypoint)
+            _csv_row(frame_id, path_index, waypoint_index, waypoint)
             for waypoint_index, waypoint in enumerate(waypoints)
         ]
         all_rows.extend(rows)
 
-        trajectory_path = _unique_csv_path(
+        path_csv_path = _unique_csv_path(
             os.path.join(
                 output_dir,
-                _trajectory_csv_name(trajectory_csv_name_format, trajectory_index),
+                _path_csv_name(path_csv_name_format, path_index),
             ),
             used_paths,
         )
-        _write_csv(trajectory_path, rows)
-        trajectory_paths.append(trajectory_path)
+        _write_csv(path_csv_path, rows)
+        path_csv_paths.append(path_csv_path)
 
     _write_csv(full_path, all_rows)
     return {
-        "paint_trajectory": full_path,
-        "trajectories": trajectory_paths,
+        "paint_path": full_path,
+        "paths": path_csv_paths,
     }
 
 
@@ -496,7 +496,7 @@ def _legacy_raster_zigzag_from_kwargs(*kwargs_maps):
     return None
 
 
-def _structure_and_export_paint_trajectory(
+def _structure_and_export_paint_path(
     painted,
     structuring_config,
     structuring_kwargs=None,
@@ -517,7 +517,7 @@ def _structure_and_export_paint_trajectory(
             options["raster_zigzag"] = legacy_raster_zigzag
 
     painted["paint_spline_raster_zigzag"] = bool(options.get("raster_zigzag", True))
-    paint_trajectory = structure_paint_trajectory(
+    paint_path = structure_paint_path(
         painted,
         frame_id=options.get("frame_id", "world"),
         raster_zigzag=options.get("raster_zigzag"),
@@ -525,19 +525,19 @@ def _structure_and_export_paint_trajectory(
 
     csv_files = {}
     if bool(options.get("save_csv", False)):
-        csv_files = save_paint_trajectory_csv_files(
-            paint_trajectory,
+        csv_files = save_paint_path_csv_files(
+            paint_path,
             csv_output_dir=options.get("csv_output_dir", ""),
-            paint_trajectory_csv_name=options.get(
-                "paint_trajectory_csv_name",
-                "paint_trajectory.csv",
+            paint_path_csv_name=options.get(
+                "paint_path_csv_name",
+                "paint_path.csv",
             ),
-            trajectory_csv_name_format=options.get(
-                "trajectory_csv_name_format",
-                "trajectory_{trajectory_index:03d}.csv",
+            path_csv_name_format=options.get(
+                "path_csv_name_format",
+                "path_{path_index:03d}.csv",
             ),
         )
-    return paint_trajectory, csv_files
+    return paint_path, csv_files
 
 
 def _generate_stage4_result(
@@ -585,7 +585,7 @@ def _generate_stage4_result(
     return painted
 
 
-def generate_paint_trajectory_debug(
+def generate_paint_path_debug(
     point_cloud_xyz,
     config=None,
     config_path=None,
@@ -609,7 +609,7 @@ def generate_paint_trajectory_debug(
         spline_kwargs=spline_kwargs,
         return_config=True,
     )
-    paint_trajectory, csv_files = _structure_and_export_paint_trajectory(
+    paint_path, csv_files = _structure_and_export_paint_path(
         painted,
         paint_config.structuring,
         structuring_kwargs=structuring_kwargs,
@@ -617,12 +617,12 @@ def generate_paint_trajectory_debug(
         spline_kwargs=spline_kwargs,
     )
     debug_result = dict(painted)
-    debug_result["paint_trajectory"] = paint_trajectory
-    debug_result["paint_trajectory_csv_files"] = csv_files
+    debug_result["paint_path"] = paint_path
+    debug_result["paint_path_csv_files"] = csv_files
     return debug_result
 
 
-def generate_paint_trajectory(
+def generate_paint_path(
     point_cloud_xyz,
     config=None,
     config_path=None,
@@ -646,15 +646,11 @@ def generate_paint_trajectory(
         spline_kwargs=spline_kwargs,
         return_config=True,
     )
-    paint_trajectory, _ = _structure_and_export_paint_trajectory(
+    paint_path, _ = _structure_and_export_paint_path(
         painted,
         paint_config.structuring,
         structuring_kwargs=structuring_kwargs,
         legacy_spline_kwargs=paint_spline_kwargs,
         spline_kwargs=spline_kwargs,
     )
-    return paint_trajectory
-
-
-generate_paint_path_debug = generate_paint_trajectory_debug
-generate_paint_path = generate_paint_trajectory
+    return paint_path

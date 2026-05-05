@@ -65,16 +65,16 @@ paint_path:
     paint_min_true_length: 0.005
 
   structuring:
-    # 구조화된 PaintTrajectory의 frame_id
+    # 구조화된 PaintPath의 frame_id
     frame_id: world
-    # 최종 trajectory row를 지그재그 방향으로 번갈아 뒤집을지 여부
+    # 최종 path row를 지그재그 방향으로 번갈아 뒤집을지 여부
     raster_zigzag: true
-    # 구조화된 PaintTrajectory와 Trajectory별 CSV 파일을 저장할지 여부
+    # 구조화된 PaintPath와 Path별 CSV 파일을 저장할지 여부
     save_csv: true
-    # 비워두면 paint_trajectory_planner/csv에 저장
-    csv_output_dir: "/home/oms/ros2_ws/src/painting_trajectory_planner/paint_trajectory_planner/csv
+    # 비워두면 paint_path_planner/csv에 저장
+    csv_output_dir: "/home/oms/ros2_ws/src/painting_path_planner/paint_path_planner/csv
 "
-    # PaintTrajectory 전체 waypoint를 하나로 모아 저장하는 CSV 파일 이름
-    paint_trajectory_csv_name: paint_trajectory.csv
-    # Trajectory별 CSV 파일 이름 형식. 사용 가능: {trajectory_index}, {trajectory_number}
-    trajectory_csv_name_format: trajectory_{trajectory_index:03d}.csv
+    # PaintPath 전체 waypoint를 하나로 모아 저장하는 CSV 파일 이름
+    paint_path_csv_name: paint_path.csv
+    # Path별 CSV 파일 이름 형식. 사용 가능: {path_index}, {path_number}
+    path_csv_name_format: path_{path_index:03d}.csv
