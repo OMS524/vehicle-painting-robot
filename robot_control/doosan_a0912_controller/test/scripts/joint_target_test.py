@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 LIB_PATH = ROOT / "build" / "libdoosan_controller_c_api.so"
 Float6 = ctypes.c_float * 6
 
@@ -112,6 +112,16 @@ class DoosanRobot:
         ]
         self._lib.doosan_controller_velocity_control_to_position.restype = ctypes.c_int
 
+        self._lib.doosan_controller_task_trajectory_csv_position_control.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+        ]
+        self._lib.doosan_controller_task_trajectory_csv_position_control.restype = ctypes.c_int
+
         self._lib.doosan_controller_hold.argtypes = [ctypes.c_void_p]
         self._lib.doosan_controller_hold.restype = None
 
@@ -204,6 +214,29 @@ class DoosanRobot:
         )
         if not ok:
             raise RuntimeError("velocity control command failed")
+
+    def task_trajectory_csv_position_control(
+        self,
+        csv_path: str | Path,
+        command_time_sec: float = 0.001,
+        max_joint_step_deg: float = 20.0,
+        max_joint_velocity_deg_s: float = 250.0,
+        max_joint_acceleration_deg_s2: float = 1500.0,
+    ) -> None:
+        path = Path(csv_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+        ok = self._lib.doosan_controller_task_trajectory_csv_position_control(
+            self._handle,
+            str(path).encode(),
+            ctypes.c_float(command_time_sec),
+            ctypes.c_float(max_joint_step_deg),
+            ctypes.c_float(max_joint_velocity_deg_s),
+            ctypes.c_float(max_joint_acceleration_deg_s2),
+        )
+        if not ok:
+            raise RuntimeError("task trajectory CSV position control failed")
 
     def hold(self) -> None:
         self._lib.doosan_controller_hold(self._handle)

@@ -1,1 +1,0 @@
-"""Paint path generation modules."""

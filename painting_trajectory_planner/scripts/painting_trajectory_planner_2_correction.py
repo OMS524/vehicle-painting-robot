@@ -705,8 +705,8 @@ def _polyline_chord_relative_w_score(path_uw, endpoint_a, endpoint_b):
 
     # Use the endpoint chord as a baseline in the (u, w) plane, and compare
     # how much each hull candidate stays above that line in the w direction.
-    t = (path[:, 0] - a[0]) / du
-    line_w = a[1] + t * (b[1] - a[1])
+    chord_fraction = (path[:, 0] - a[0]) / du
+    line_w = a[1] + chord_fraction * (b[1] - a[1])
     relative_w = path[:, 1] - line_w
     arc = _polyline_arclength_2d(path)
     positive_area = float(np.trapz(np.maximum(relative_w, 0.0), arc))

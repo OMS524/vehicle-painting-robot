@@ -53,10 +53,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/oms/doosan_a0912_controller
+CMAKE_SOURCE_DIR = /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/oms/doosan_a0912_controller/build
+CMAKE_BINARY_DIR = /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build
 
 # Include any dependencies generated for this target.
 include CMakeFiles/doosan_controller_c_api.dir/depend.make
@@ -72,16 +72,16 @@ include CMakeFiles/doosan_controller_c_api.dir/flags.make
 CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o: CMakeFiles/doosan_controller_c_api.dir/flags.make
 CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o: ../src/doosan_controller_c_api.cpp
 CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o: CMakeFiles/doosan_controller_c_api.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/oms/doosan_a0912_controller/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o -MF CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o.d -o CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o -c /home/oms/doosan_a0912_controller/src/doosan_controller_c_api.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o -MF CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o.d -o CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o -c /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/src/doosan_controller_c_api.cpp
 
 CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/oms/doosan_a0912_controller/src/doosan_controller_c_api.cpp > CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.i
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/src/doosan_controller_c_api.cpp > CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.i
 
 CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/oms/doosan_a0912_controller/src/doosan_controller_c_api.cpp -o CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.s
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/src/doosan_controller_c_api.cpp -o CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.s
 
 # Object files for target doosan_controller_c_api
 doosan_controller_c_api_OBJECTS = \
@@ -93,11 +93,11 @@ doosan_controller_c_api_EXTERNAL_OBJECTS =
 libdoosan_controller_c_api.so: CMakeFiles/doosan_controller_c_api.dir/src/doosan_controller_c_api.cpp.o
 libdoosan_controller_c_api.so: CMakeFiles/doosan_controller_c_api.dir/build.make
 libdoosan_controller_c_api.so: libdoosan_controller.a
-libdoosan_controller_c_api.so: ../API-DRFL/library/Linux/64bits/amd64/22.04/libDRFL.a
-libdoosan_controller_c_api.so: ../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoFoundation.so
-libdoosan_controller_c_api.so: ../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoNet.so
+libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libDRFL.a
+libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoFoundation.so
+libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoNet.so
 libdoosan_controller_c_api.so: CMakeFiles/doosan_controller_c_api.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/oms/doosan_a0912_controller/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX shared library libdoosan_controller_c_api.so"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX shared library libdoosan_controller_c_api.so"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/doosan_controller_c_api.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.
@@ -109,6 +109,6 @@ CMakeFiles/doosan_controller_c_api.dir/clean:
 .PHONY : CMakeFiles/doosan_controller_c_api.dir/clean
 
 CMakeFiles/doosan_controller_c_api.dir/depend:
-	cd /home/oms/doosan_a0912_controller/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/oms/doosan_a0912_controller /home/oms/doosan_a0912_controller /home/oms/doosan_a0912_controller/build /home/oms/doosan_a0912_controller/build /home/oms/doosan_a0912_controller/build/CMakeFiles/doosan_controller_c_api.dir/DependInfo.cmake --color=$(COLOR)
+	cd /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build/CMakeFiles/doosan_controller_c_api.dir/DependInfo.cmake --color=$(COLOR)
 .PHONY : CMakeFiles/doosan_controller_c_api.dir/depend
 

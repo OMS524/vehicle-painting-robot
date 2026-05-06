@@ -10,15 +10,15 @@ import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
-PROJECT_NAME = "painting_path_planner"
+PROJECT_NAME = "painting_trajectory_planner"
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from paint_path_planner_1_surface_spline_extraction import generate_surface_spline_rows
-from paint_path_planner_2_correction import correct_surface_spline_rows
-from paint_path_planner_3_offset import generate_offset_rows
-from paint_path_planner_4_spline import generate_paint_spline_rows
-from paint_path_planner_5_structuring import structure_paint_path
+from painting_trajectory_planner_1_surface_spline_extraction import generate_surface_spline_rows
+from painting_trajectory_planner_2_correction import correct_surface_spline_rows
+from painting_trajectory_planner_3_offset import generate_offset_rows
+from painting_trajectory_planner_4_spline import generate_paint_spline_rows
+from painting_trajectory_planner_5_structuring import structure_painting_trajectory
 
 
 @dataclass
@@ -135,8 +135,8 @@ class OffsetConfig:
 @dataclass
 class SplineConfig:
     spline_point_spacing: float
-    tcp_speed: float
     endpoint_extension_length: float
+    raster_zigzag: bool
     paint_check_distance: float
     paint_check_half_width: float
     paint_min_false_length: float
@@ -154,8 +154,8 @@ class SplineConfig:
     def to_kwargs(self):
         return {
             "paint_spline_point_spacing": self.spline_point_spacing,
-            "tcp_speed": self.tcp_speed,
             "endpoint_extension_length": self.endpoint_extension_length,
+            "raster_zigzag": self.raster_zigzag,
             "paint_check_distance": self.paint_check_distance,
             "paint_check_half_width": self.paint_check_half_width,
             "paint_min_false_length": self.paint_min_false_length,
@@ -167,13 +167,10 @@ PaintSplineConfig = SplineConfig
 
 
 @dataclass
-class StructuringConfig:
-    frame_id: str = "world"
-    raster_zigzag: bool = True
-    save_csv: bool = True
-    csv_output_dir: str = ""
-    paint_path_csv_name: str = "paint_path.csv"
-    path_csv_name_format: str = "path_{path_index:03d}.csv"
+class TrajectoryConfig:
+    desired_speed: float
+    control_dt: float
+    max_acceleration: float
 
     @classmethod
     def from_dict(cls, data=None):
@@ -184,22 +181,39 @@ class StructuringConfig:
 
 
 @dataclass
-class PaintPathConfig:
+class StructuringConfig:
+    frame_id: str = "world"
+    save_csv: bool = True
+    csv_output_dir: str = ""
+    painting_trajectory_csv_name: str = "painting_trajectory.csv"
+    trajectory_csv_name_format: str = "trajectory_{row_index:03d}.csv"
+
+    @classmethod
+    def from_dict(cls, data=None):
+        return _dataclass_from_dict(cls, data)
+
+    def to_kwargs(self):
+        return asdict(self)
+
+
+@dataclass
+class PaintingTrajectoryConfig:
     surface_extraction: SurfaceExtractionConfig
     correction: CorrectionConfig
     offset: OffsetConfig
     spline: SplineConfig
+    trajectory: TrajectoryConfig
     structuring: StructuringConfig
 
     @classmethod
     def from_yaml(cls, path=None, overrides=None):
-        return cls.from_dict(_load_paint_path_config(path), overrides=overrides)
+        return cls.from_dict(_load_painting_trajectory_config(path), overrides=overrides)
 
     @classmethod
     def from_dict(cls, data=None, overrides=None):
         source = _mapping_from_config(data)
-        if "paint_path" in source:
-            source = _mapping_from_config(source["paint_path"])
+        if "painting_trajectory" in source:
+            source = _mapping_from_config(source["painting_trajectory"])
         if overrides:
             source = _deep_update_dict(source, overrides)
         legacy_spline = _mapping_from_config(source.get("paint_spline", {}))
@@ -207,11 +221,8 @@ class PaintPathConfig:
         if legacy_spline:
             spline_data = _deep_update_dict(spline_data, legacy_spline)
         structuring_data = _mapping_from_config(source.get("structuring", {}))
-        if (
-            "raster_zigzag" not in structuring_data
-            and "raster_zigzag" in legacy_spline
-        ):
-            structuring_data["raster_zigzag"] = legacy_spline["raster_zigzag"]
+        if "raster_zigzag" not in spline_data and "raster_zigzag" in structuring_data:
+            spline_data["raster_zigzag"] = structuring_data["raster_zigzag"]
         return cls(
             surface_extraction=SurfaceExtractionConfig.from_dict(
                 source.get("surface_extraction", {})
@@ -219,6 +230,7 @@ class PaintPathConfig:
             correction=CorrectionConfig.from_dict(source.get("correction", {})),
             offset=OffsetConfig.from_dict(source.get("offset", {})),
             spline=SplineConfig.from_dict(spline_data),
+            trajectory=TrajectoryConfig.from_dict(source.get("trajectory", {})),
             structuring=StructuringConfig.from_dict(structuring_data),
         )
 
@@ -226,7 +238,7 @@ class PaintPathConfig:
         return asdict(self)
 
     def copy_with_overrides(self, overrides=None):
-        return PaintPathConfig.from_dict(self.to_dict(), overrides=overrides)
+        return PaintingTrajectoryConfig.from_dict(self.to_dict(), overrides=overrides)
 
     @property
     def paint_spline(self):
@@ -236,7 +248,7 @@ class PaintPathConfig:
 def _mapping_from_config(config):
     if config is None:
         return {}
-    if isinstance(config, PaintPathConfig):
+    if isinstance(config, PaintingTrajectoryConfig):
         return config.to_dict()
     if is_dataclass(config):
         return asdict(config)
@@ -281,18 +293,18 @@ def _deep_update_dict(base, updates):
     return result
 
 
-def load_paint_path_config(path=None, overrides=None) -> PaintPathConfig:
-    return PaintPathConfig.from_yaml(path=path, overrides=overrides)
+def load_painting_trajectory_config(path=None, overrides=None) -> PaintingTrajectoryConfig:
+    return PaintingTrajectoryConfig.from_yaml(path=path, overrides=overrides)
 
 
-_DEFAULT_PAINT_PATH_CONFIG = None
+_DEFAULT_PAINTING_TRAJECTORY_CONFIG = None
 
 
-def get_default_paint_path_config() -> PaintPathConfig:
-    global _DEFAULT_PAINT_PATH_CONFIG
-    if _DEFAULT_PAINT_PATH_CONFIG is None:
-        _DEFAULT_PAINT_PATH_CONFIG = PaintPathConfig.from_yaml()
-    return _DEFAULT_PAINT_PATH_CONFIG.copy_with_overrides()
+def get_default_painting_trajectory_config() -> PaintingTrajectoryConfig:
+    global _DEFAULT_PAINTING_TRAJECTORY_CONFIG
+    if _DEFAULT_PAINTING_TRAJECTORY_CONFIG is None:
+        _DEFAULT_PAINTING_TRAJECTORY_CONFIG = PaintingTrajectoryConfig.from_yaml()
+    return _DEFAULT_PAINTING_TRAJECTORY_CONFIG.copy_with_overrides()
 
 
 def _resolve_config_path(filename):
@@ -319,35 +331,37 @@ def _resolve_config_path(filename):
     return filename
 
 
-def _load_paint_path_config(path=None):
-    config_path = path or _resolve_config_path("paint_path.yaml")
+def _load_painting_trajectory_config(path=None):
+    config_path = path or _resolve_config_path("painting_trajectory.yaml")
     if not os.path.isfile(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
     with open(config_path, "r", encoding="utf-8") as stream:
         loaded = yaml.safe_load(stream) or {}
 
-    if not isinstance(loaded, dict) or not isinstance(loaded.get("paint_path"), dict):
+    if not isinstance(loaded, dict) or not isinstance(loaded.get("painting_trajectory"), dict):
         raise ValueError(
-            f"Config file must contain top-level 'paint_path' mapping: {config_path}"
+            f"Config file must contain top-level 'painting_trajectory' mapping: {config_path}"
         )
-    return dict(loaded["paint_path"])
+    return dict(loaded["painting_trajectory"])
 
 
-def _resolve_paint_path_config(config=None, config_path=None, overrides=None):
+def _resolve_painting_trajectory_config(config=None, config_path=None, overrides=None):
     if config is None and config_path is None:
-        return get_default_paint_path_config().copy_with_overrides(overrides)
+        return get_default_painting_trajectory_config().copy_with_overrides(overrides)
     if config is None:
-        return PaintPathConfig.from_yaml(config_path, overrides=overrides)
-    if isinstance(config, PaintPathConfig):
+        return PaintingTrajectoryConfig.from_yaml(config_path, overrides=overrides)
+    if isinstance(config, PaintingTrajectoryConfig):
         return config.copy_with_overrides(overrides)
-    return PaintPathConfig.from_dict(config, overrides=overrides)
+    return PaintingTrajectoryConfig.from_dict(config, overrides=overrides)
 
 
-PAINT_PATH_CSV_HEADER = [
-    "path_index",
-    "waypoint_index",
+PAINTING_TRAJECTORY_CSV_HEADER = [
+    "row_index",
+    "point_index",
     "frame_id",
+    "t",
+    "s",
     "position_x",
     "position_y",
     "position_z",
@@ -355,8 +369,15 @@ PAINT_PATH_CSV_HEADER = [
     "orientation_y",
     "orientation_z",
     "orientation_w",
+    "linear_velocity_x",
+    "linear_velocity_y",
+    "linear_velocity_z",
+    "angular_velocity_x",
+    "angular_velocity_y",
+    "angular_velocity_z",
+    "path_speed",
+    "path_acceleration",
     "paint",
-    "time_from_start",
 ]
 
 
@@ -379,17 +400,21 @@ def _csv_name(name, default):
     return value
 
 
-def _path_csv_name(template, path_index):
+def _trajectory_csv_name(template, row_index):
     name_template = _csv_name(
         template,
-        "path_{path_index:03d}.csv",
+        "trajectory_{row_index:03d}.csv",
     )
     try:
         return name_template.format(
-            path_index=int(path_index),
-            path_number=int(path_index) + 1,
-            index=int(path_index),
-            number=int(path_index) + 1,
+            path_index=int(row_index),
+            path_number=int(row_index) + 1,
+            row_index=int(row_index),
+            row_number=int(row_index) + 1,
+            trajectory_index=int(row_index),
+            trajectory_number=int(row_index) + 1,
+            index=int(row_index),
+            number=int(row_index) + 1,
         )
     except (IndexError, KeyError, ValueError):
         return name_template
@@ -411,13 +436,17 @@ def _unique_csv_path(path, used_paths):
         suffix += 1
 
 
-def _csv_row(frame_id, path_index, waypoint_index, waypoint):
-    position = list(getattr(waypoint, "position", (0.0, 0.0, 0.0)))
-    orientation = list(getattr(waypoint, "orientation", (0.0, 0.0, 0.0, 1.0)))
+def _csv_row(frame_id, row_index, point_index, point):
+    position = list(getattr(point, "position", (0.0, 0.0, 0.0)))
+    orientation = list(getattr(point, "orientation", (0.0, 0.0, 0.0, 1.0)))
+    linear_velocity = list(getattr(point, "linear_velocity", (0.0, 0.0, 0.0)))
+    angular_velocity = list(getattr(point, "angular_velocity", (0.0, 0.0, 0.0)))
     return [
-        int(path_index),
-        int(waypoint_index),
+        int(row_index),
+        int(point_index),
         str(frame_id),
+        float(getattr(point, "t", 0.0)),
+        float(getattr(point, "s", 0.0)),
         float(position[0]),
         float(position[1]),
         float(position[2]),
@@ -425,8 +454,15 @@ def _csv_row(frame_id, path_index, waypoint_index, waypoint):
         float(orientation[1]),
         float(orientation[2]),
         float(orientation[3]),
-        int(bool(getattr(waypoint, "paint", False))),
-        float(getattr(waypoint, "time_from_start", 0.0)),
+        float(linear_velocity[0]),
+        float(linear_velocity[1]),
+        float(linear_velocity[2]),
+        float(angular_velocity[0]),
+        float(angular_velocity[1]),
+        float(angular_velocity[2]),
+        float(getattr(point, "path_speed", 0.0)),
+        float(getattr(point, "path_acceleration", 0.0)),
+        int(bool(getattr(point, "paint", False))),
     ]
 
 
@@ -436,108 +472,107 @@ def _write_csv(path, rows):
         os.makedirs(directory, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
-        writer.writerow(PAINT_PATH_CSV_HEADER)
+        writer.writerow(PAINTING_TRAJECTORY_CSV_HEADER)
         writer.writerows(rows)
 
 
-def save_paint_path_csv_files(
-    paint_path,
+def save_painting_trajectory_csv_files(
+    painting_trajectory,
     csv_output_dir="",
-    paint_path_csv_name="paint_path.csv",
-    path_csv_name_format="path_{path_index:03d}.csv",
+    painting_trajectory_csv_name="painting_trajectory.csv",
+    trajectory_csv_name_format="trajectory_{row_index:03d}.csv",
 ):
     output_dir = _resolve_csv_output_dir(csv_output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    frame_id = str(getattr(paint_path, "frame_id", ""))
-    paths = list(getattr(paint_path, "paths", []))
+    frame_id = str(getattr(painting_trajectory, "frame_id", ""))
+    rows = list(getattr(painting_trajectory, "rows", []))
     all_rows = []
-    path_csv_paths = []
+    trajectory_csv_paths = []
     used_paths = set()
 
     full_path = _unique_csv_path(
         os.path.join(
             output_dir,
-            _csv_name(paint_path_csv_name, "paint_path.csv"),
+            _csv_name(painting_trajectory_csv_name, "painting_trajectory.csv"),
         ),
         used_paths,
     )
 
-    for path_index, path_entry in enumerate(paths):
-        waypoints = list(getattr(path_entry, "waypoints", []))
-        rows = [
-            _csv_row(frame_id, path_index, waypoint_index, waypoint)
-            for waypoint_index, waypoint in enumerate(waypoints)
+    for row_number, trajectory_row in enumerate(rows):
+        row_index = int(getattr(trajectory_row, "row_index", row_number))
+        points = list(getattr(trajectory_row, "points", []))
+        csv_rows = [
+            _csv_row(frame_id, row_index, point_index, point)
+            for point_index, point in enumerate(points)
         ]
-        all_rows.extend(rows)
+        all_rows.extend(csv_rows)
 
-        path_csv_path = _unique_csv_path(
+        trajectory_csv_path = _unique_csv_path(
             os.path.join(
                 output_dir,
-                _path_csv_name(path_csv_name_format, path_index),
+                _trajectory_csv_name(trajectory_csv_name_format, row_index),
             ),
             used_paths,
         )
-        _write_csv(path_csv_path, rows)
-        path_csv_paths.append(path_csv_path)
+        _write_csv(trajectory_csv_path, csv_rows)
+        trajectory_csv_paths.append(trajectory_csv_path)
 
     _write_csv(full_path, all_rows)
     return {
-        "paint_path": full_path,
-        "paths": path_csv_paths,
+        "painting_trajectory": full_path,
+        "trajectories": trajectory_csv_paths,
+        "paths": trajectory_csv_paths,
     }
 
 
-def _legacy_raster_zigzag_from_kwargs(*kwargs_maps):
-    for kwargs in reversed(kwargs_maps):
-        source = dict(kwargs or {})
-        if "raster_zigzag" in source:
-            return bool(source["raster_zigzag"])
-    return None
-
-
-def _structure_and_export_paint_path(
+def _structure_and_export_painting_trajectory(
     painted,
     structuring_config,
     structuring_kwargs=None,
-    legacy_spline_kwargs=None,
-    spline_kwargs=None,
 ):
     explicit_structuring_kwargs = dict(structuring_kwargs or {})
     options = {
         **structuring_config.to_kwargs(),
         **explicit_structuring_kwargs,
     }
-    if "raster_zigzag" not in explicit_structuring_kwargs:
-        legacy_raster_zigzag = _legacy_raster_zigzag_from_kwargs(
-            legacy_spline_kwargs,
-            spline_kwargs,
-        )
-        if legacy_raster_zigzag is not None:
-            options["raster_zigzag"] = legacy_raster_zigzag
-
-    painted["paint_spline_raster_zigzag"] = bool(options.get("raster_zigzag", True))
-    paint_path = structure_paint_path(
+    painting_trajectory = structure_painting_trajectory(
         painted,
         frame_id=options.get("frame_id", "world"),
-        raster_zigzag=options.get("raster_zigzag"),
     )
 
     csv_files = {}
     if bool(options.get("save_csv", False)):
-        csv_files = save_paint_path_csv_files(
-            paint_path,
+        csv_files = save_painting_trajectory_csv_files(
+            painting_trajectory,
             csv_output_dir=options.get("csv_output_dir", ""),
-            paint_path_csv_name=options.get(
-                "paint_path_csv_name",
-                "paint_path.csv",
+            painting_trajectory_csv_name=options.get(
+                "painting_trajectory_csv_name",
+                "painting_trajectory.csv",
             ),
-            path_csv_name_format=options.get(
-                "path_csv_name_format",
-                "path_{path_index:03d}.csv",
+            trajectory_csv_name_format=options.get(
+                "trajectory_csv_name_format",
+                "trajectory_{row_index:03d}.csv",
             ),
         )
-    return paint_path, csv_files
+    return painting_trajectory, csv_files
+
+
+def _stage4_kwargs_with_legacy_structuring_raster_zigzag(
+    paint_spline_kwargs,
+    spline_kwargs,
+    structuring_kwargs,
+):
+    effective_paint_spline_kwargs = dict(paint_spline_kwargs or {})
+    effective_spline_kwargs = dict(spline_kwargs or {})
+    source = dict(structuring_kwargs or {})
+    if (
+        "raster_zigzag" in source
+        and "raster_zigzag" not in effective_paint_spline_kwargs
+        and "raster_zigzag" not in effective_spline_kwargs
+    ):
+        effective_spline_kwargs["raster_zigzag"] = bool(source["raster_zigzag"])
+    return effective_paint_spline_kwargs, effective_spline_kwargs
 
 
 def _generate_stage4_result(
@@ -552,7 +587,7 @@ def _generate_stage4_result(
     spline_kwargs=None,
     return_config=False,
 ):
-    paint_config = _resolve_paint_path_config(
+    paint_config = _resolve_painting_trajectory_config(
         config=config,
         config_path=config_path,
         overrides=overrides,
@@ -572,6 +607,7 @@ def _generate_stage4_result(
     }
     paint_spline_kwargs = {
         **paint_config.spline.to_kwargs(),
+        **paint_config.trajectory.to_kwargs(),
         **dict(paint_spline_kwargs or {}),
         **dict(spline_kwargs or {}),
     }
@@ -585,7 +621,7 @@ def _generate_stage4_result(
     return painted
 
 
-def generate_paint_path_debug(
+def generate_painting_trajectory_debug(
     point_cloud_xyz,
     config=None,
     config_path=None,
@@ -597,6 +633,11 @@ def generate_paint_path_debug(
     spline_kwargs=None,
     structuring_kwargs=None,
 ):
+    paint_spline_kwargs, spline_kwargs = _stage4_kwargs_with_legacy_structuring_raster_zigzag(
+        paint_spline_kwargs,
+        spline_kwargs,
+        structuring_kwargs,
+    )
     painted, paint_config = _generate_stage4_result(
         point_cloud_xyz,
         config=config,
@@ -609,20 +650,18 @@ def generate_paint_path_debug(
         spline_kwargs=spline_kwargs,
         return_config=True,
     )
-    paint_path, csv_files = _structure_and_export_paint_path(
+    painting_trajectory, csv_files = _structure_and_export_painting_trajectory(
         painted,
         paint_config.structuring,
         structuring_kwargs=structuring_kwargs,
-        legacy_spline_kwargs=paint_spline_kwargs,
-        spline_kwargs=spline_kwargs,
     )
     debug_result = dict(painted)
-    debug_result["paint_path"] = paint_path
-    debug_result["paint_path_csv_files"] = csv_files
+    debug_result["painting_trajectory"] = painting_trajectory
+    debug_result["painting_trajectory_csv_files"] = csv_files
     return debug_result
 
 
-def generate_paint_path(
+def generate_painting_trajectory(
     point_cloud_xyz,
     config=None,
     config_path=None,
@@ -634,6 +673,11 @@ def generate_paint_path(
     spline_kwargs=None,
     structuring_kwargs=None,
 ):
+    paint_spline_kwargs, spline_kwargs = _stage4_kwargs_with_legacy_structuring_raster_zigzag(
+        paint_spline_kwargs,
+        spline_kwargs,
+        structuring_kwargs,
+    )
     painted, paint_config = _generate_stage4_result(
         point_cloud_xyz,
         config=config,
@@ -646,11 +690,9 @@ def generate_paint_path(
         spline_kwargs=spline_kwargs,
         return_config=True,
     )
-    paint_path, _ = _structure_and_export_paint_path(
+    painting_trajectory, _ = _structure_and_export_painting_trajectory(
         painted,
         paint_config.structuring,
         structuring_kwargs=structuring_kwargs,
-        legacy_spline_kwargs=paint_spline_kwargs,
-        spline_kwargs=spline_kwargs,
     )
-    return paint_path
+    return painting_trajectory

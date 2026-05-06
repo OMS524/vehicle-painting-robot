@@ -152,21 +152,21 @@ def _polyline_tangents(points):
 def _slerp_unit_vectors(v0, v1, fraction):
     a = _safe_normalize(v0)
     b = _safe_normalize(v1)
-    t = float(np.clip(fraction, 0.0, 1.0))
+    alpha = float(np.clip(fraction, 0.0, 1.0))
     dot = float(np.clip(np.dot(a, b), -1.0, 1.0))
 
     if dot > 0.9995:
-        return _safe_normalize((1.0 - t) * a + t * b)
+        return _safe_normalize((1.0 - alpha) * a + alpha * b)
     if dot < -0.9995:
-        blended = (1.0 - t) * a + t * b
+        blended = (1.0 - alpha) * a + alpha * b
         if float(np.linalg.norm(blended)) > 1e-9:
             return _safe_normalize(blended)
-        return a.copy() if t < 0.5 else b.copy()
+        return a.copy() if alpha < 0.5 else b.copy()
 
     theta = float(np.arccos(dot))
     sin_theta = float(np.sin(theta))
-    coeff0 = np.sin((1.0 - t) * theta) / sin_theta
-    coeff1 = np.sin(t * theta) / sin_theta
+    coeff0 = np.sin((1.0 - alpha) * theta) / sin_theta
+    coeff1 = np.sin(alpha * theta) / sin_theta
     return _safe_normalize(coeff0 * a + coeff1 * b)
 
 
@@ -239,6 +239,169 @@ def _orientations_from_tangent_and_direction(tangents, directions):
         quats[idx] = quat
 
     return quats
+
+
+def _interpolate_points_at_arc(dense_arc, dense_points, target_arc):
+    return np.column_stack(
+        [
+            np.interp(target_arc, dense_arc, dense_points[:, 0]),
+            np.interp(target_arc, dense_arc, dense_points[:, 1]),
+            np.interp(target_arc, dense_arc, dense_points[:, 2]),
+        ]
+    )
+
+
+def _tangents_at_arc(dense_arc, dense_points, target_arc):
+    dense_tangents = _polyline_tangents(dense_points)
+    if dense_tangents.shape != dense_points.shape:
+        return np.empty((0, 3), float)
+    tangents = np.column_stack(
+        [
+            np.interp(target_arc, dense_arc, dense_tangents[:, 0]),
+            np.interp(target_arc, dense_arc, dense_tangents[:, 1]),
+            np.interp(target_arc, dense_arc, dense_tangents[:, 2]),
+        ]
+    )
+    return _safe_normalize_rows(tangents)
+
+
+def _build_trapezoid_profile(length, desired_speed, max_acceleration):
+    total_length = max(float(length), 0.0)
+    v_max = max(float(desired_speed), 1e-6)
+    a_max = max(float(max_acceleration), 1e-6)
+    if total_length <= 1e-9:
+        return {
+            "length": 0.0,
+            "v_peak": 0.0,
+            "a_max": a_max,
+            "ta": 0.0,
+            "tc": 0.0,
+            "tf": 0.0,
+            "triangular": False,
+        }
+
+    ta_to_vmax = v_max / a_max
+    accel_distance = 0.5 * a_max * ta_to_vmax * ta_to_vmax
+    if 2.0 * accel_distance >= total_length:
+        ta = float(np.sqrt(total_length / a_max))
+        return {
+            "length": total_length,
+            "v_peak": a_max * ta,
+            "a_max": a_max,
+            "ta": ta,
+            "tc": 0.0,
+            "tf": 2.0 * ta,
+            "triangular": True,
+        }
+
+    cruise_distance = total_length - 2.0 * accel_distance
+    tc = cruise_distance / v_max
+    return {
+        "length": total_length,
+        "v_peak": v_max,
+        "a_max": a_max,
+        "ta": ta_to_vmax,
+        "tc": tc,
+        "tf": 2.0 * ta_to_vmax + tc,
+        "triangular": False,
+    }
+
+
+def _sample_profile_times(total_time, control_dt):
+    tf = max(float(total_time), 0.0)
+    dt = max(float(control_dt), 1e-4)
+    if tf <= 1e-9:
+        return np.array([0.0], dtype=float)
+    times = np.arange(0.0, tf, dt, dtype=float)
+    if times.size == 0 or not np.isclose(times[-1], tf, atol=1e-10):
+        times = np.concatenate([times, [tf]])
+    return np.unique(times)
+
+
+def _sample_trapezoid_profile(profile, t):
+    length = float(profile["length"])
+    if length <= 1e-9:
+        return 0.0, 0.0, 0.0
+
+    a = float(profile["a_max"])
+    v = float(profile["v_peak"])
+    ta = float(profile["ta"])
+    tc = float(profile["tc"])
+    tf = float(profile["tf"])
+    time = float(np.clip(t, 0.0, tf))
+
+    if time <= 0.0:
+        return 0.0, 0.0, a
+    if time < ta:
+        return 0.5 * a * time * time, a * time, a
+    if time < ta + tc:
+        s = 0.5 * a * ta * ta + v * (time - ta)
+        return s, v, 0.0
+    if time < tf:
+        td = time - ta - tc
+        s = 0.5 * a * ta * ta + v * tc + v * td - 0.5 * a * td * td
+        return min(s, length), max(v - a * td, 0.0), -a
+    return length, 0.0, 0.0
+
+
+def _quat_conjugate_xyzw(quat):
+    q = np.asarray(quat, float).reshape(4)
+    return np.array([-q[0], -q[1], -q[2], q[3]], dtype=float)
+
+
+def _quat_multiply_xyzw(q1, q2):
+    x1, y1, z1, w1 = np.asarray(q1, float).reshape(4)
+    x2, y2, z2, w2 = np.asarray(q2, float).reshape(4)
+    return np.array(
+        [
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ],
+        dtype=float,
+    )
+
+
+def _quat_delta_axis_angle_xyzw(q0, q1):
+    a = np.asarray(q0, float).reshape(4)
+    b = np.asarray(q1, float).reshape(4)
+    if float(np.dot(a, b)) < 0.0:
+        b = -b
+    rel = _quat_multiply_xyzw(b, _quat_conjugate_xyzw(a))
+    rel = rel / max(float(np.linalg.norm(rel)), 1e-12)
+    if rel[3] < 0.0:
+        rel = -rel
+    vector = rel[:3]
+    vector_norm = float(np.linalg.norm(vector))
+    if vector_norm <= 1e-12:
+        return np.zeros(3, dtype=float), 0.0
+    angle = 2.0 * float(np.arctan2(vector_norm, float(rel[3])))
+    return vector / vector_norm, angle
+
+
+def _angular_velocities_from_quaternions_and_arc(quats, arc_lengths, path_speeds):
+    orientations = np.asarray(quats, float)
+    arcs = np.asarray(arc_lengths, float).reshape(-1)
+    speeds = np.asarray(path_speeds, float).reshape(-1)
+    if orientations.ndim != 2 or orientations.shape[1] != 4 or len(orientations) == 0:
+        return np.empty((0, 3), float)
+
+    angular = np.zeros((len(orientations), 3), dtype=float)
+    if len(orientations) == 1:
+        return angular
+
+    for idx in range(len(orientations)):
+        lo = max(0, idx - 1)
+        hi = min(len(orientations) - 1, idx + 1)
+        if hi == lo:
+            continue
+        ds = float(arcs[hi] - arcs[lo])
+        if abs(ds) <= 1e-12:
+            continue
+        axis, angle = _quat_delta_axis_angle_xyzw(orientations[lo], orientations[hi])
+        angular[idx] = axis * (angle / ds) * float(speeds[idx])
+    return angular
 
 
 def _build_interpolating_spline(points_world, directions_world):
@@ -356,6 +519,9 @@ def _sample_extended_spline_row_uniform(
     directions_world,
     point_spacing,
     extension_length,
+    desired_speed,
+    control_dt,
+    max_acceleration,
 ):
     built = _build_interpolating_spline(points_world, directions_world)
     if built is None:
@@ -417,14 +583,21 @@ def _sample_extended_spline_row_uniform(
         return None
 
     total_length = float(dense_arc[-1])
-    target_arc = _sample_arclength_grid(total_length, spacing)
-    sampled_points = np.column_stack(
-        [
-            np.interp(target_arc, dense_arc, dense_points[:, 0]),
-            np.interp(target_arc, dense_arc, dense_points[:, 1]),
-            np.interp(target_arc, dense_arc, dense_points[:, 2]),
-        ]
+    profile = _build_trapezoid_profile(
+        total_length,
+        desired_speed=desired_speed,
+        max_acceleration=max_acceleration,
     )
+    sample_times = _sample_profile_times(profile["tf"], control_dt)
+    profile_samples = np.asarray(
+        [_sample_trapezoid_profile(profile, time) for time in sample_times],
+        dtype=float,
+    )
+    target_arc = profile_samples[:, 0]
+    path_speeds = profile_samples[:, 1]
+    path_accelerations = profile_samples[:, 2]
+
+    sampled_points = _interpolate_points_at_arc(dense_arc, dense_points, target_arc)
     sampled_points[0] = dense_points[0]
     sampled_points[-1] = dense_points[-1]
 
@@ -463,7 +636,7 @@ def _sample_extended_spline_row_uniform(
         )
     anchor_mask &= base_paint_mask
 
-    tangents = _polyline_tangents(sampled_points)
+    tangents = _tangents_at_arc(dense_arc, dense_points, target_arc)
     if tangents.shape != sampled_points.shape:
         return None
 
@@ -474,11 +647,25 @@ def _sample_extended_spline_row_uniform(
     if orientations.shape != (len(sampled_points), 4):
         return None
 
+    linear_velocities = tangents * path_speeds.reshape(-1, 1)
+    angular_velocities = _angular_velocities_from_quaternions_and_arc(
+        orientations,
+        target_arc,
+        path_speeds,
+    )
+    if angular_velocities.shape != sampled_points.shape:
+        return None
+
     core_points = sampled_points[base_paint_mask]
     return {
+        "times": sample_times,
         "points": sampled_points,
         "core_points": core_points,
         "arc_lengths": target_arc,
+        "path_speeds": path_speeds,
+        "path_accelerations": path_accelerations,
+        "linear_velocities": linear_velocities,
+        "angular_velocities": angular_velocities,
         "directions": sampled_dirs,
         "tangents": tangents,
         "orientations": orientations,
@@ -486,6 +673,7 @@ def _sample_extended_spline_row_uniform(
         "base_paint_mask": base_paint_mask,
         "extension_rows": extension_rows,
         "extension_points": extension_points,
+        "motion_profile": profile,
         "spline_degree": int(built["degree"]),
     }
 
@@ -642,18 +830,17 @@ def _paint_surface_hit_mask_2d(
 def generate_paint_spline_rows(
     offset_result,
     paint_spline_point_spacing=0.01,
-    tcp_speed=0.1,
     raster_zigzag=True,
     endpoint_extension_length=0.0,
+    desired_speed=0.2,
+    control_dt=0.01,
+    max_acceleration=0.2,
     paint_check_distance=0.22,
     paint_check_half_width=0.005,
     paint_min_false_length=0.02,
     paint_min_true_length=0.0,
 ):
     result = dict(offset_result)
-    tcp_speed = float(tcp_speed)
-    if tcp_speed <= 1e-9:
-        raise ValueError("tcp_speed must be positive")
 
     offset_rows = list(result.get("offset_rows", []))
     offset_normals = list(result.get("offset_row_normals_world", []))
@@ -672,8 +859,12 @@ def generate_paint_spline_rows(
     direction_rows = []
     orientation_rows = []
     tangent_rows = []
-    arc_length_rows = []
     time_rows = []
+    arc_length_rows = []
+    path_speed_rows = []
+    path_acceleration_rows = []
+    linear_velocity_rows = []
+    angular_velocity_rows = []
     anchor_mask_rows = []
     base_paint_mask_rows = []
     raw_surface_hit_mask_rows = []
@@ -695,22 +886,37 @@ def generate_paint_spline_rows(
         if anchor_dirs.shape != anchor_points.shape:
             anchor_dirs = np.repeat(default_direction.reshape(1, 3), len(anchor_points), axis=0)
 
+        trajectory_row_index = len(full_rows)
+        if bool(raster_zigzag) and trajectory_row_index % 2 == 1:
+            anchor_points = anchor_points[::-1]
+            anchor_dirs = anchor_dirs[::-1]
+
         sampled = _sample_extended_spline_row_uniform(
             anchor_points,
             anchor_dirs,
             point_spacing=paint_spline_point_spacing,
             extension_length=endpoint_extension_length,
+            desired_speed=desired_speed,
+            control_dt=control_dt,
+            max_acceleration=max_acceleration,
         )
         if sampled is None:
             continue
 
+        full_times = np.asarray(sampled["times"], float).reshape(-1)
         full_row = sampled["points"]
         core_row = sampled["core_points"]
         full_dirs = sampled["directions"]
         full_tangents = sampled["tangents"]
         full_orientations = sampled["orientations"]
         full_arc_lengths = np.asarray(sampled["arc_lengths"], float).reshape(-1)
-        full_times = full_arc_lengths / tcp_speed
+        full_path_speeds = np.asarray(sampled["path_speeds"], float).reshape(-1)
+        full_path_accelerations = np.asarray(
+            sampled["path_accelerations"],
+            float,
+        ).reshape(-1)
+        full_linear_velocities = np.asarray(sampled["linear_velocities"], float)
+        full_angular_velocities = np.asarray(sampled["angular_velocities"], float)
         full_anchor_mask = sampled["anchor_mask"]
         base_paint_mask = sampled["base_paint_mask"]
 
@@ -752,8 +958,12 @@ def generate_paint_spline_rows(
         direction_rows.append(full_dirs)
         tangent_rows.append(full_tangents)
         orientation_rows.append(full_orientations)
-        arc_length_rows.append(full_arc_lengths)
         time_rows.append(full_times)
+        arc_length_rows.append(full_arc_lengths)
+        path_speed_rows.append(full_path_speeds)
+        path_acceleration_rows.append(full_path_accelerations)
+        linear_velocity_rows.append(full_linear_velocities)
+        angular_velocity_rows.append(full_angular_velocities)
         anchor_mask_rows.append(full_anchor_mask)
         base_paint_mask_rows.append(np.asarray(base_paint_mask, dtype=bool))
         raw_surface_hit_mask_rows.append(np.asarray(raw_surface_hit_mask, dtype=bool))
@@ -766,14 +976,19 @@ def generate_paint_spline_rows(
                 "directions_world": full_dirs,
                 "tangents_world": full_tangents,
                 "orientations_xyzw": full_orientations,
+                "times": full_times.copy(),
                 "arc_lengths": full_arc_lengths.copy(),
-                "time_from_start": full_times.copy(),
+                "path_speeds": full_path_speeds.copy(),
+                "path_accelerations": full_path_accelerations.copy(),
+                "linear_velocities_world": full_linear_velocities.copy(),
+                "angular_velocities_world": full_angular_velocities.copy(),
                 "anchor_mask": full_anchor_mask.copy(),
                 "base_paint_mask": np.asarray(base_paint_mask, dtype=bool).copy(),
                 "raw_surface_hit_mask": np.asarray(raw_surface_hit_mask, dtype=bool).copy(),
                 "surface_hit_mask": np.asarray(surface_hit_mask, dtype=bool).copy(),
                 "paint_mask": final_paint_mask.copy(),
                 "slice_position": row_slice_position,
+                "motion_profile": dict(sampled["motion_profile"]),
             }
         )
 
@@ -798,8 +1013,12 @@ def generate_paint_spline_rows(
     result["paint_spline_direction_rows_world"] = direction_rows
     result["paint_spline_tangent_rows_world"] = tangent_rows
     result["paint_spline_orientation_rows_xyzw"] = orientation_rows
-    result["paint_spline_arc_length_rows"] = arc_length_rows
     result["paint_spline_time_rows"] = time_rows
+    result["paint_spline_arc_length_rows"] = arc_length_rows
+    result["paint_spline_path_speed_rows"] = path_speed_rows
+    result["paint_spline_path_acceleration_rows"] = path_acceleration_rows
+    result["paint_spline_linear_velocity_rows_world"] = linear_velocity_rows
+    result["paint_spline_angular_velocity_rows_world"] = angular_velocity_rows
     result["paint_spline_anchor_mask_rows"] = anchor_mask_rows
     result["paint_spline_base_paint_mask_rows"] = base_paint_mask_rows
     result["paint_spline_raw_surface_hit_mask_rows"] = raw_surface_hit_mask_rows
@@ -808,7 +1027,9 @@ def generate_paint_spline_rows(
     result["paint_spline_row_slice_positions"] = row_slice_positions
     result["paint_spline_profiles"] = paint_spline_profiles
     result["paint_spline_point_spacing"] = float(paint_spline_point_spacing)
-    result["paint_spline_tcp_speed"] = float(tcp_speed)
+    result["paint_spline_control_dt"] = float(control_dt)
+    result["paint_spline_desired_speed"] = float(desired_speed)
+    result["paint_spline_max_acceleration"] = float(max_acceleration)
     result["paint_spline_raster_zigzag"] = bool(raster_zigzag)
     result["paint_spline_paint_check_distance"] = float(paint_check_distance)
     result["paint_spline_paint_check_half_width"] = float(paint_check_half_width)
@@ -816,6 +1037,19 @@ def generate_paint_spline_rows(
     result["paint_spline_paint_min_true_length"] = float(paint_min_true_length)
     result["paint_spline_degree"] = int(INTERPOLATING_BSPLINE_DEGREE)
     result["endpoint_extension_length"] = float(endpoint_extension_length)
+
+    result["paint_trajectory_time_rows"] = time_rows
+    result["paint_trajectory_position_rows"] = full_rows
+    result["paint_trajectory_orientation_rows_xyzw"] = orientation_rows
+    result["paint_trajectory_linear_velocity_rows_world"] = linear_velocity_rows
+    result["paint_trajectory_angular_velocity_rows_world"] = angular_velocity_rows
+    result["paint_trajectory_arc_length_rows"] = arc_length_rows
+    result["paint_trajectory_path_speed_rows"] = path_speed_rows
+    result["paint_trajectory_path_acceleration_rows"] = path_acceleration_rows
+    result["paint_trajectory_paint_mask_rows"] = paint_mask_rows
+    result["paint_trajectory_control_dt"] = float(control_dt)
+    result["paint_trajectory_desired_speed"] = float(desired_speed)
+    result["paint_trajectory_max_acceleration"] = float(max_acceleration)
     return result
 
 

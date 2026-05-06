@@ -1,4 +1,4 @@
-# Install script for directory: /home/oms/doosan_a0912_controller
+# Install script for directory: /home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -50,5 +50,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/home/oms/doosan_a0912_controller/build/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

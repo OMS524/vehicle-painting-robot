@@ -1,4 +1,4 @@
-paint_path:
+painting_trajectory:
   surface_extraction:
     # 로컬 작업 좌표계에서 슬라이스를 시작할 방향: top / bottom / left / right
     spline_start_side: top
@@ -49,12 +49,12 @@ paint_path:
     offset_distance: 0.2
 
   spline:
-    # 최종 spline 출력용 재샘플링 간격 [m]
-    spline_point_spacing: 0.005
-    # 최종 경로 샘플별 time_from_start 계산에 사용할 TCP 목표 속도 [m/s]
-    tcp_speed: 0.1
+    # spline arc-length table 생성을 위한 내부 샘플링 해상도 [m]
+    spline_point_spacing: 0.0001
     # 생성된 paint spline 양 끝을 끝 접선 방향으로 직선 연장할 길이 [m]
     endpoint_extension_length: 0.1
+    # trajectory row를 생성하기 전에 한 줄씩 번갈아 뒤집어 지그재그 진행 방향으로 만들지 여부
+    raster_zigzag: true
     # 분사 T/F 검사 시 TCP position으로부터 분사 방향으로 볼 최대 거리 [m] (권장값: offset_distance + 추가 거리)
     paint_check_distance: 0.45
     # 분사 T/F 검사 시 2D 검사 영역의 반폭 [m]
@@ -64,17 +64,22 @@ paint_path:
     # 분사 T/F 검사 시 양옆이 False인 경우, 이 길이보다 짧은 연속 True 구간은 False로 메움 [m]
     paint_min_true_length: 0.005
 
+  trajectory:
+    # TCP 경로 방향 목표 속도 [m/s]
+    desired_speed: 0.1
+    # 로봇 제어 주기 [s]
+    control_dt: 0.001
+    # TCP 경로 방향 최대 가속도 [m/s^2]
+    max_acceleration: 0.5
+
   structuring:
-    # 구조화된 PaintPath의 frame_id
+    # 구조화된 PaintingTrajectory의 frame_id
     frame_id: world
-    # 최종 path row를 지그재그 방향으로 번갈아 뒤집을지 여부
-    raster_zigzag: true
-    # 구조화된 PaintPath와 Path별 CSV 파일을 저장할지 여부
+    # 구조화된 PaintingTrajectory와 trajectory별 CSV 파일을 저장할지 여부
     save_csv: true
-    # 비워두면 paint_path_planner/csv에 저장
-    csv_output_dir: "/home/oms/ros2_ws/src/painting_path_planner/paint_path_planner/csv
-"
-    # PaintPath 전체 waypoint를 하나로 모아 저장하는 CSV 파일 이름
-    paint_path_csv_name: paint_path.csv
-    # Path별 CSV 파일 이름 형식. 사용 가능: {path_index}, {path_number}
-    path_csv_name_format: path_{path_index:03d}.csv
+    # 비워두면 painting_trajectory_planner/csv에 저장
+    csv_output_dir: ""
+    # PaintingTrajectory 전체 waypoint를 하나로 모아 저장하는 CSV 파일 이름
+    painting_trajectory_csv_name: painting_trajectory.csv
+    # trajectory별 CSV 파일 이름 형식. 사용 가능: {row_index}, {row_number}
+    trajectory_csv_name_format: trajectory_{row_index:03d}.csv

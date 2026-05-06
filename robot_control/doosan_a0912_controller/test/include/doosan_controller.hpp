@@ -5,9 +5,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace doosan
 {
@@ -77,6 +79,13 @@ public:
         float timeout_sec,
         float command_time_sec = 0.0f);
 
+    bool taskTrajectoryCsvPositionControl(
+        const std::string &csv_path,
+        float command_time_sec = 0.0f,
+        float max_joint_step_deg = 20.0f,
+        float max_joint_velocity_deg_s = 250.0f,
+        float max_joint_acceleration_deg_s2 = 1500.0f);
+
     bool connect(const Config &config);
     bool servoOn(std::chrono::seconds timeout = std::chrono::seconds(15));
     bool servoOff();
@@ -113,6 +122,15 @@ private:
         JointPosition,
         JointVelocity,
         JointVelocityTarget,
+        JointTrajectory,
+    };
+
+    struct JointTrajectoryPoint
+    {
+        double time_sec = 0.0;
+        JointArray position = {};
+        JointArray velocity = {};
+        JointArray acceleration = {};
     };
 
     struct Command
@@ -145,6 +163,7 @@ private:
         JointArray a4 = {};
         JointArray a5 = {};
         JointArray target_position = {};
+        std::shared_ptr<const std::vector<JointTrajectoryPoint>> joint_trajectory;
     };
 
     bool waitForControlAccessAndStandby(std::chrono::seconds timeout);
@@ -168,6 +187,21 @@ private:
         float tolerance_deg,
         float timeout_sec,
         float command_time_sec);
+    bool setTaskTrajectoryCsvPositionTarget(
+        const std::string &csv_path,
+        float command_time_sec,
+        float max_joint_step_deg,
+        float max_joint_velocity_deg_s,
+        float max_joint_acceleration_deg_s2);
+    bool setJointTrajectoryPositionTarget(
+        std::shared_ptr<const std::vector<JointTrajectoryPoint>> trajectory,
+        float command_time_sec);
+    bool loadTaskTrajectoryCsv(
+        const std::string &csv_path,
+        float max_joint_step_deg,
+        float max_joint_velocity_deg_s,
+        float max_joint_acceleration_deg_s2,
+        std::vector<JointTrajectoryPoint> *trajectory);
     void realtimeLoop();
 
     void handleAccessControl(MONITORING_ACCESS_CONTROL access);

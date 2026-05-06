@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = -DDRCF_VERSION=2 -Ddoosan_controller_c_api_EXPORTS
 
-CXX_INCLUDES = -I/home/oms/doosan_a0912_controller/include -I/home/oms/doosan_a0912_controller/API-DRFL/include
+CXX_INCLUDES = -I/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/include -I/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/../API-DRFL/include
 
 CXX_FLAGS = -fPIC -std=c++17
 
