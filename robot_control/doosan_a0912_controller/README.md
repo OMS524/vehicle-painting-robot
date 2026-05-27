@@ -123,3 +123,23 @@ cmake --build build -j4
 3. limit clamp
 
 4. speedj_rt(qdot_cmd)
+
+
+
+
+
+
+Constraint:
+  position tolerance
+  orientation angle tolerance
+  joint position limit
+  joint velocity limit
+  joint acceleration limit
+
+Objective:
+  position error
+  orientation angle error
+  velocity smoothness
+  acceleration smoothness
+  joint center
+  singularity avoidance
