@@ -20,16 +20,25 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT.parents[2]
 DEFAULT_TRAJECTORY_CSV = [
-    PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_000.csv",
-    PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_001.csv",
-    PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_002.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_000.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_001.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_002.csv",
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_003.csv",
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_004.csv",
+
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_005.csv",
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_006.csv",
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_007.csv",
+
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_008.csv",
     # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_door_small/trajectory_009.csv",
+
+
+
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_bumper_small/trajectory_000.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_bumper_small/trajectory_001.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_bumper_small/trajectory_002.csv",
+    # PROJECT_ROOT / "painting_trajectory_planner/test/csv/car_bumper_small/trajectory_003.csv",
 ]
 DEFAULT_URDF = (
     PROJECT_ROOT
@@ -38,8 +47,33 @@ DEFAULT_URDF = (
 DEFAULT_OUTPUT_DIR = Path("/tmp/trajectory_nlp")
 
 TCP_FRAME = "link_6"
+TCP_SPRAY_AXIS = "z"
+TCP_PATH_AXIS = "y"
 COMMAND_TIME_SEC = 0.001
 DONE_MARGIN_SEC = 2.0
+
+INITIAL_JOINT_DEG = "90,0,90,-90,0,0"
+POSITION_TOLERANCE_M = 0.002
+ORIENTATION_TOLERANCE_DEG = 1.0
+MAX_JOINT_STEP_DEG = 20.0
+MAX_JOINT_VELOCITY_DEG_S = 70.0
+MAX_JOINT_ACCELERATION_DEG_S2 = 500.0
+MIN_MANIPULABILITY = 0.0
+
+POSITION_WEIGHT = 1000.0
+ORIENTATION_WEIGHT = 100.0
+VELOCITY_WEIGHT = 1.0e-3
+ACCELERATION_WEIGHT = 1.0e-4
+CENTER_WEIGHT = 1.0e-3
+SINGULARITY_WEIGHT = 1.0e-8
+
+IPOPT_MAX_ITER = 800
+IPOPT_TOL = 1.0e-5
+IPOPT_PRINT_LEVEL = 5
+
+JOINT_POSITION_GAIN = 4.0
+PREPOSITION_MAX_JOINT_VELOCITY_DEG_S = 15.0
+PREPOSITION_MAX_JOINT_ACCELERATION_DEG_S2 = 100.0
 
 
 @dataclass
@@ -71,6 +105,62 @@ def parse_float_list(text: str, expected: int, name: str) -> list[float]:
     if len(values) != expected:
         raise ValueError(f"{name} must contain {expected} comma-separated values")
     return values
+
+
+def parse_signed_axis(axis: str) -> tuple[int, float]:
+    value = str(axis).strip().lower()
+    sign = 1.0
+    if value.startswith("+"):
+        value = value[1:]
+    elif value.startswith("-"):
+        value = value[1:]
+        sign = -1.0
+
+    indices = {"x": 0, "y": 1, "z": 2}
+    if value not in indices:
+        raise ValueError(f"invalid axis '{axis}'. Use one of x, y, z, -x, -y, -z")
+    return indices[value], sign
+
+
+def remap_planner_rotation_to_tcp(
+    planner_rotation: np.ndarray,
+    tcp_spray_axis: str,
+    tcp_path_axis: str,
+) -> np.ndarray:
+    spray_index, spray_sign = parse_signed_axis(tcp_spray_axis)
+    path_index, path_sign = parse_signed_axis(tcp_path_axis)
+    if spray_index == path_index:
+        raise ValueError("--tcp-spray-axis and --tcp-path-axis must use different axes")
+
+    planner_rotation = np.asarray(planner_rotation, dtype=float).reshape(3, 3)
+    planner_path_axis = planner_rotation[:, 0]
+    planner_spray_axis = planner_rotation[:, 2]
+
+    tcp_axes: list[np.ndarray | None] = [None, None, None]
+    tcp_axes[spray_index] = spray_sign * planner_spray_axis
+
+    path_axis = planner_path_axis - float(np.dot(planner_path_axis, tcp_axes[spray_index])) * tcp_axes[spray_index]
+    path_norm = float(np.linalg.norm(path_axis))
+    if path_norm <= 1.0e-9:
+        path_axis = planner_rotation[:, 1]
+        path_axis = path_axis - float(np.dot(path_axis, tcp_axes[spray_index])) * tcp_axes[spray_index]
+        path_norm = float(np.linalg.norm(path_axis))
+    if path_norm <= 1.0e-9:
+        raise ValueError("could not build TCP target rotation from planner rotation")
+    tcp_axes[path_index] = path_sign * (path_axis / path_norm)
+
+    missing_index = next(index for index, axis in enumerate(tcp_axes) if axis is None)
+    if missing_index == 0:
+        tcp_axes[0] = np.cross(tcp_axes[1], tcp_axes[2])
+    elif missing_index == 1:
+        tcp_axes[1] = np.cross(tcp_axes[2], tcp_axes[0])
+    else:
+        tcp_axes[2] = np.cross(tcp_axes[0], tcp_axes[1])
+
+    tcp_rotation = np.column_stack([axis / max(float(np.linalg.norm(axis)), 1.0e-12) for axis in tcp_axes])
+    if float(np.linalg.det(tcp_rotation)) < 0.0:
+        tcp_rotation[:, missing_index] *= -1.0
+    return tcp_rotation
 
 
 def rpy_to_matrix_np(rpy: np.ndarray) -> np.ndarray:
@@ -232,11 +322,13 @@ def ca_rotation_from_row_major(values):
     )
 
 
-def ca_orientation_error(current_rotation, target_rotation):
+def ca_orientation_cosine(current_rotation, target_rotation):
+    relative_rotation = target_rotation.T @ current_rotation
     return 0.5 * (
-        ca_cross(current_rotation[:, 0], target_rotation[:, 0])
-        + ca_cross(current_rotation[:, 1], target_rotation[:, 1])
-        + ca_cross(current_rotation[:, 2], target_rotation[:, 2])
+        relative_rotation[0, 0]
+        + relative_rotation[1, 1]
+        + relative_rotation[2, 2]
+        - 1.0
     )
 
 
@@ -298,7 +390,7 @@ class KinematicModel:
         target_rotation = ca_rotation_from_row_major(target[3:12])
         residual = ca.vertcat(
             position - target_position,
-            ca_orientation_error(rotation, target_rotation),
+            ca.reshape(rotation - target_rotation, 9, 1),
         )
         residual_jacobian = ca.jacobian(residual, q)
         return ca.Function("residual_jacobian", [q, target], [residual, residual_jacobian])
@@ -313,7 +405,13 @@ class KinematicModel:
         )
 
 
-def load_task_points(csv_path: Path, stride: int, max_points: int) -> list[TaskPoint]:
+def load_task_points(
+    csv_path: Path,
+    stride: int,
+    max_points: int,
+    tcp_spray_axis: str,
+    tcp_path_axis: str,
+) -> list[TaskPoint]:
     with csv_path.open("r", newline="", encoding="utf-8-sig") as stream:
         reader = csv.DictReader(stream)
         required = [
@@ -364,6 +462,11 @@ def load_task_points(csv_path: Path, stride: int, max_points: int) -> list[TaskP
                 float(row["orientation_y"]),
                 float(row["orientation_z"]),
                 float(row["orientation_w"]),
+            )
+            rotation = remap_planner_rotation_to_tcp(
+                rotation,
+                tcp_spray_axis=tcp_spray_axis,
+                tcp_path_axis=tcp_path_axis,
             )
             points.append(
                 TaskPoint(
@@ -421,7 +524,7 @@ def seed_path(
             jacobian = np.asarray(jacobian, dtype=float)
             if (
                 np.linalg.norm(residual[:3]) < 2.0e-3
-                and np.linalg.norm(residual[3:]) < math.radians(1.0)
+                and np.linalg.norm(residual[3:]) < 3.0e-2
             ):
                 break
             lhs = jacobian.T @ jacobian + damping * damping * np.eye(model.nq)
@@ -441,7 +544,7 @@ def seed_path(
             print(
                 f"[nlp] seed {point_index + 1}/{len(points)} "
                 f"pos_err={np.linalg.norm(residual[:3]):.5f}m "
-                f"rot_err={math.degrees(np.linalg.norm(residual[3:])):.3f}deg"
+                f"rot_resid={np.linalg.norm(residual[3:]):.5f}"
             )
         out.append(q.copy())
     return np.asarray(out, dtype=float)
@@ -585,19 +688,22 @@ def optimize_trajectory(
 
     position_tol = float(args.position_tolerance)
     orientation_tol = math.radians(float(args.orientation_tolerance_deg))
+    orientation_min_cos = math.cos(orientation_tol)
 
     for index, point in enumerate(points):
         qk = q_var[:, index]
         position, rotation, jacobian = model.fk_symbolic(qk)
+        target_rotation = ca.DM(point.rotation)
         pos_err = position - ca.DM(point.position.reshape(3, 1))
-        rot_err = ca_orientation_error(rotation, ca.DM(point.rotation))
+        orientation_cos = ca_orientation_cosine(rotation, target_rotation)
+        orientation_cost = 1.0 - orientation_cos
 
         opti.subject_to(opti.bounded(q_lower, qk, q_upper))
         opti.subject_to(opti.bounded(-position_tol, pos_err, position_tol))
-        opti.subject_to(opti.bounded(-orientation_tol, rot_err, orientation_tol))
+        opti.subject_to(orientation_cos >= orientation_min_cos)
 
         objective += args.position_weight * ca.sumsqr(pos_err)
-        objective += args.orientation_weight * ca.sumsqr(rot_err)
+        objective += args.orientation_weight * orientation_cost
         objective += args.center_weight * ca.sumsqr((qk - q_mid) / q_range)
 
         if args.singularity_weight > 0.0:
@@ -652,7 +758,11 @@ def optimize_trajectory(
     return q_solution
 
 
-def evaluate_solution(model: KinematicModel, points: list[TaskPoint], q_solution: np.ndarray) -> dict[str, float]:
+def evaluate_solution(
+    model: KinematicModel,
+    points: list[TaskPoint],
+    q_solution: np.ndarray,
+) -> dict[str, float]:
     fk_fun = model.fk_function()
     max_pos_error = 0.0
     max_rot_error = 0.0
@@ -662,17 +772,15 @@ def evaluate_solution(model: KinematicModel, points: list[TaskPoint], q_solution
         position = np.asarray(position, dtype=float).reshape(3)
         rotation = np.asarray(rotation_vec, dtype=float).reshape(3, 3)
         jacobian = np.asarray(jacobian, dtype=float)
-        rot_err = np.asarray(
-            ca_orientation_error(ca.DM(rotation), ca.DM(point.rotation)),
-            dtype=float,
-        ).reshape(3)
         max_pos_error = max(max_pos_error, float(np.linalg.norm(position - point.position)))
-        max_rot_error = max(max_rot_error, float(np.linalg.norm(rot_err)))
+        orientation_cos = 0.5 * (float(np.trace(point.rotation.T @ rotation)) - 1.0)
+        orientation_cos = float(np.clip(orientation_cos, -1.0, 1.0))
+        max_rot_error = max(max_rot_error, math.degrees(math.acos(orientation_cos)))
         det_value = float(np.linalg.det(jacobian @ jacobian.T))
         min_manipulability = min(min_manipulability, math.sqrt(max(0.0, det_value)))
     return {
         "max_position_error_m": max_pos_error,
-        "max_orientation_error_deg": math.degrees(max_rot_error),
+        "max_orientation_error_deg": max_rot_error,
         "min_manipulability": min_manipulability,
     }
 
@@ -796,28 +904,38 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--max-points", type=int, default=0)
-    parser.add_argument("--initial-joint-deg", default="90,0,90,-90,0,0")
-    parser.add_argument("--position-tolerance", type=float, default=0.002)
-    parser.add_argument("--orientation-tolerance-deg", type=float, default=1.0)
-    parser.add_argument("--max-joint-step-deg", type=float, default=20.0)
-    parser.add_argument("--max-joint-velocity-deg-s", type=float, default=70.0)
-    parser.add_argument("--max-joint-acceleration-deg-s2", type=float, default=500.0)
-    parser.add_argument("--min-manipulability", type=float, default=0.0)
-    parser.add_argument("--position-weight", type=float, default=1000.0)
-    parser.add_argument("--orientation-weight", type=float, default=100.0)
-    parser.add_argument("--velocity-weight", type=float, default=1.0e-3)
-    parser.add_argument("--acceleration-weight", type=float, default=1.0e-4)
-    parser.add_argument("--center-weight", type=float, default=1.0e-3)
-    parser.add_argument("--singularity-weight", type=float, default=1.0e-8)
-    parser.add_argument("--ipopt-max-iter", type=int, default=800)
-    parser.add_argument("--ipopt-tol", type=float, default=1.0e-5)
-    parser.add_argument("--ipopt-print-level", type=int, default=5)
+    parser.add_argument("--initial-joint-deg", default=INITIAL_JOINT_DEG)
+    parser.add_argument("--position-tolerance", type=float, default=POSITION_TOLERANCE_M)
+    parser.add_argument("--orientation-tolerance-deg", type=float, default=ORIENTATION_TOLERANCE_DEG)
+    parser.add_argument("--tcp-spray-axis", default=TCP_SPRAY_AXIS)
+    parser.add_argument("--tcp-path-axis", default=TCP_PATH_AXIS)
+    parser.add_argument("--max-joint-step-deg", type=float, default=MAX_JOINT_STEP_DEG)
+    parser.add_argument("--max-joint-velocity-deg-s", type=float, default=MAX_JOINT_VELOCITY_DEG_S)
+    parser.add_argument("--max-joint-acceleration-deg-s2", type=float, default=MAX_JOINT_ACCELERATION_DEG_S2)
+    parser.add_argument("--min-manipulability", type=float, default=MIN_MANIPULABILITY)
+    parser.add_argument("--position-weight", type=float, default=POSITION_WEIGHT)
+    parser.add_argument("--orientation-weight", type=float, default=ORIENTATION_WEIGHT)
+    parser.add_argument("--velocity-weight", type=float, default=VELOCITY_WEIGHT)
+    parser.add_argument("--acceleration-weight", type=float, default=ACCELERATION_WEIGHT)
+    parser.add_argument("--center-weight", type=float, default=CENTER_WEIGHT)
+    parser.add_argument("--singularity-weight", type=float, default=SINGULARITY_WEIGHT)
+    parser.add_argument("--ipopt-max-iter", type=int, default=IPOPT_MAX_ITER)
+    parser.add_argument("--ipopt-tol", type=float, default=IPOPT_TOL)
+    parser.add_argument("--ipopt-print-level", type=int, default=IPOPT_PRINT_LEVEL)
     parser.add_argument("--execute", action="store_true", help="Send optimized joint CSV to the robot after solving.")
     parser.add_argument("--command-dt", type=float, default=COMMAND_TIME_SEC)
     parser.add_argument("--command-time-sec", type=float, default=COMMAND_TIME_SEC)
-    parser.add_argument("--joint-position-gain", type=float, default=4.0)
-    parser.add_argument("--preposition-max-joint-velocity-deg-s", type=float, default=10.0)
-    parser.add_argument("--preposition-max-joint-acceleration-deg-s2", type=float, default=100.0)
+    parser.add_argument("--joint-position-gain", type=float, default=JOINT_POSITION_GAIN)
+    parser.add_argument(
+        "--preposition-max-joint-velocity-deg-s",
+        type=float,
+        default=PREPOSITION_MAX_JOINT_VELOCITY_DEG_S,
+    )
+    parser.add_argument(
+        "--preposition-max-joint-acceleration-deg-s2",
+        type=float,
+        default=PREPOSITION_MAX_JOINT_ACCELERATION_DEG_S2,
+    )
     return parser.parse_args(argv)
 
 
@@ -832,6 +950,10 @@ def main(argv: list[str] | None = None) -> int:
     urdf_path = args.urdf.expanduser().resolve()
     if not urdf_path.is_file():
         raise FileNotFoundError(urdf_path)
+    parse_signed_axis(args.tcp_spray_axis)
+    parse_signed_axis(args.tcp_path_axis)
+    if parse_signed_axis(args.tcp_spray_axis)[0] == parse_signed_axis(args.tcp_path_axis)[0]:
+        raise ValueError("--tcp-spray-axis and --tcp-path-axis must use different axes")
 
     chain = parse_urdf_chain(urdf_path, args.tcp_frame)
     model = KinematicModel(chain)
@@ -846,12 +968,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[nlp] URDF: {urdf_path}")
     print(f"[nlp] joints: {', '.join(model.joint_names)}")
+    print(f"[nlp] TCP spray axis: {args.tcp_spray_axis} path axis: {args.tcp_path_axis}")
     print(f"[nlp] output: {args.output}")
 
     command_outputs = []
     for csv_index, input_csv in enumerate(input_csvs, start=1):
         print(f"[nlp] input #{csv_index}/{len(input_csvs)}: {input_csv}")
-        points = load_task_points(input_csv, stride=args.stride, max_points=args.max_points)
+        points = load_task_points(
+            input_csv,
+            stride=args.stride,
+            max_points=args.max_points,
+            tcp_spray_axis=args.tcp_spray_axis,
+            tcp_path_axis=args.tcp_path_axis,
+        )
         print(
             f"[nlp] loaded points={len(points)} duration={points[-1].t:.3f}s "
             f"stride={args.stride} max_points={args.max_points}"
