@@ -17,7 +17,7 @@ DEFAULT_TRAJECTORY_CSV = (
     / "painting_trajectory_planner/test/csv/car_door_small/trajectory_000.csv"
 )
 
-COMMAND_TIME_SEC = 0.001
+COMMAND_TIME_SEC = 0.01
 DONE_MARGIN_SEC = 2.0
 
 MAX_JOINT_STEP_DEG = 20.0
@@ -32,8 +32,19 @@ def trajectory_duration_sec(csv_path: Path) -> float:
             raise ValueError(f"{csv_path} does not contain a t column")
 
         last_t = None
+        first_row_index = None
         for row in reader:
             text = str(row.get("t", "")).strip()
+            row_index_text = str(row.get("row_index", "")).strip()
+            row_index = int(float(row_index_text)) if row_index_text else None
+            if first_row_index is None:
+                first_row_index = row_index
+            elif row_index is not None and row_index != first_row_index:
+                raise ValueError(
+                    f"{csv_path} contains multiple row_index values. "
+                    "Use one trajectory_XXX.csv file for this test."
+                )
+
             if text:
                 last_t = float(text)
 
@@ -92,7 +103,10 @@ def main() -> int:
     )
     robot.wait_until_motion_done(duration + DONE_MARGIN_SEC)
     print("[python] trajectory done")
-    return 0
+
+    print("[python] robot is running. Press Ctrl+C to servo off and exit.")
+    while True:
+        time.sleep(1.0)
 
 
 if __name__ == "__main__":

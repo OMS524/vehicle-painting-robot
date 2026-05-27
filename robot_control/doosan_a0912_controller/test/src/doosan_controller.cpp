@@ -8,13 +8,47 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <unordered_map>
+
+#ifndef DOOSAN_HAS_PINOCCHIO
+#define DOOSAN_HAS_PINOCCHIO 0
+#endif
+
+#if DOOSAN_HAS_PINOCCHIO
+#include <Eigen/Dense>
+#include <pinocchio/algorithm/frames.hpp>
+#include <pinocchio/algorithm/jacobian.hpp>
+#include <pinocchio/algorithm/kinematics.hpp>
+#include <pinocchio/parsers/urdf.hpp>
+#include <pinocchio/spatial/explog.hpp>
+#endif
 
 namespace doosan
 {
 
 DoosanController *DoosanController::active_instance_ = nullptr;
+
+#if DOOSAN_HAS_PINOCCHIO
+struct DoosanController::CartesianVelocityContext
+{
+    pinocchio::Model model;
+    pinocchio::Data data;
+    pinocchio::FrameIndex frame_id = 0;
+    std::string frame_name;
+
+    explicit CartesianVelocityContext(const pinocchio::Model &pinocchio_model)
+        : model(pinocchio_model),
+          data(model)
+    {
+    }
+};
+#else
+struct DoosanController::CartesianVelocityContext
+{
+};
+#endif
 
 namespace
 {
@@ -98,6 +132,60 @@ bool parseDouble(const std::vector<std::string> &fields,
     }
 }
 
+std::string findFirstColumn(
+    const std::unordered_map<std::string, std::size_t> &columns,
+    const std::vector<std::string> &names)
+{
+    for (const auto &name : names)
+    {
+        if (columns.find(name) != columns.end())
+        {
+            return name;
+        }
+    }
+    return {};
+}
+
+std::vector<std::string> jointPositionColumnNames(int joint_index)
+{
+    const std::string n = std::to_string(joint_index + 1);
+    return {
+        "q" + n,
+        "q" + n + "_deg",
+        "joint_" + n,
+        "joint_" + n + "_deg",
+        "position_" + n,
+        "position_" + n + "_deg"};
+}
+
+std::vector<std::string> jointVelocityColumnNames(int joint_index)
+{
+    const std::string n = std::to_string(joint_index + 1);
+    return {
+        "qd" + n,
+        "qdot" + n,
+        "qd" + n + "_deg_s",
+        "qdot" + n + "_deg_s",
+        "velocity_" + n,
+        "velocity_" + n + "_deg_s",
+        "joint_" + n + "_velocity",
+        "joint_" + n + "_velocity_deg_s"};
+}
+
+std::vector<std::string> jointAccelerationColumnNames(int joint_index)
+{
+    const std::string n = std::to_string(joint_index + 1);
+    return {
+        "qdd" + n,
+        "qddot" + n,
+        "qdd" + n + "_deg_s2",
+        "qddot" + n + "_deg_s2",
+        "acceleration_" + n,
+        "acceleration_" + n + "_deg_s2",
+        "joint_" + n + "_acceleration",
+        "joint_" + n + "_acceleration_deg_s2"};
+}
+
 double clampUnit(double value)
 {
     return std::clamp(value, -1.0, 1.0);
@@ -106,6 +194,11 @@ double clampUnit(double value)
 double radToDeg(double rad)
 {
     return rad * 180.0 / kPi;
+}
+
+double degToRad(double deg)
+{
+    return deg * kPi / 180.0;
 }
 
 double wrapAngleDeg(double value)
@@ -233,6 +326,118 @@ doosan::DoosanController::JointArray interpolateJointArray(
     }
     return out;
 }
+
+std::array<double, 3> interpolateArray3(
+    const std::array<double, 3> &a,
+    const std::array<double, 3> &b,
+    double alpha)
+{
+    std::array<double, 3> out = {};
+    const double u = std::clamp(alpha, 0.0, 1.0);
+    for (int i = 0; i < 3; ++i)
+    {
+        out[i] = (1.0 - u) * a[i] + u * b[i];
+    }
+    return out;
+}
+
+doosan::DoosanController::JointArray clampJointArray(
+    const doosan::DoosanController::JointArray &value,
+    double limit_abs)
+{
+    doosan::DoosanController::JointArray out = value;
+    if (limit_abs <= 0.0)
+    {
+        return out;
+    }
+
+    for (int i = 0; i < doosan::DoosanController::kNumJoints; ++i)
+    {
+        out[i] = static_cast<float>(
+            std::clamp(static_cast<double>(out[i]), -limit_abs, limit_abs));
+    }
+    return out;
+}
+
+#if DOOSAN_HAS_PINOCCHIO
+Eigen::Matrix3d rotationFromRowMajor(const std::array<double, 9> &rotation)
+{
+    Eigen::Matrix3d out;
+    out << rotation[0], rotation[1], rotation[2],
+        rotation[3], rotation[4], rotation[5],
+        rotation[6], rotation[7], rotation[8];
+    return out;
+}
+
+std::array<double, 9> rowMajorFromRotation(const Eigen::Matrix3d &rotation)
+{
+    return {
+        rotation(0, 0), rotation(0, 1), rotation(0, 2),
+        rotation(1, 0), rotation(1, 1), rotation(1, 2),
+        rotation(2, 0), rotation(2, 1), rotation(2, 2)};
+}
+
+Eigen::Vector3d vectorFromArray3(const std::array<double, 3> &value)
+{
+    return Eigen::Vector3d(value[0], value[1], value[2]);
+}
+
+Eigen::Quaterniond quaternionFromRowMajor(const std::array<double, 9> &rotation)
+{
+    Eigen::Quaterniond quat(rotationFromRowMajor(rotation));
+    quat.normalize();
+    return quat;
+}
+
+doosan::DoosanController::TaskTrajectoryPoint interpolateTaskTrajectoryPoint(
+    const std::vector<doosan::DoosanController::TaskTrajectoryPoint> &trajectory,
+    double elapsed_sec)
+{
+    if (trajectory.empty())
+    {
+        return {};
+    }
+
+    if (trajectory.size() == 1 || elapsed_sec <= trajectory.front().time_sec)
+    {
+        return trajectory.front();
+    }
+    if (elapsed_sec >= trajectory.back().time_sec)
+    {
+        return trajectory.back();
+    }
+
+    const auto upper = std::lower_bound(
+        trajectory.begin(),
+        trajectory.end(),
+        elapsed_sec,
+        [](const doosan::DoosanController::TaskTrajectoryPoint &point, double t) {
+            return point.time_sec < t;
+        });
+    if (upper == trajectory.begin())
+    {
+        return *upper;
+    }
+    if (upper == trajectory.end())
+    {
+        return trajectory.back();
+    }
+
+    const auto lower = upper - 1;
+    const double segment_dt = std::max(upper->time_sec - lower->time_sec, 1.0e-9);
+    const double alpha = (elapsed_sec - lower->time_sec) / segment_dt;
+
+    auto out = *lower;
+    out.time_sec = elapsed_sec;
+    out.position = interpolateArray3(lower->position, upper->position, alpha);
+    out.linear_velocity = interpolateArray3(lower->linear_velocity, upper->linear_velocity, alpha);
+    out.angular_velocity = interpolateArray3(lower->angular_velocity, upper->angular_velocity, alpha);
+    const Eigen::Quaterniond q0 = quaternionFromRowMajor(lower->rotation);
+    const Eigen::Quaterniond q1 = quaternionFromRowMajor(upper->rotation);
+    out.rotation = rowMajorFromRotation(q0.slerp(std::clamp(alpha, 0.0, 1.0), q1).toRotationMatrix());
+    return out;
+}
+#endif
 }  // namespace
 
 DoosanController::DoosanController()
@@ -571,6 +776,435 @@ bool DoosanController::taskTrajectoryCsvPositionControl(
     }
 
     return true;
+}
+
+bool DoosanController::jointTrajectoryCsvPositionControl(
+    const std::string &csv_path,
+    float command_time_sec,
+    float max_joint_step_deg,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2)
+{
+    if (!servo_on_)
+    {
+        std::cerr << "[robot] jointTrajectoryCsvPositionControl requires initialize()/servoOn()\n";
+        return false;
+    }
+
+    if (config_.system != RobotSystem::Real)
+    {
+        std::cerr << "[robot] jointTrajectoryCsvPositionControl uses servoj_rt and requires real robot mode\n";
+        return false;
+    }
+
+    auto trajectory = std::make_shared<std::vector<JointTrajectoryPoint>>();
+    if (!loadJointTrajectoryCsv(
+            csv_path,
+            max_joint_step_deg > 0.0f ? max_joint_step_deg : 20.0f,
+            max_joint_velocity_deg_s > 0.0f ? max_joint_velocity_deg_s : 250.0f,
+            max_joint_acceleration_deg_s2 > 0.0f ? max_joint_acceleration_deg_s2 : 1500.0f,
+            trajectory.get()))
+    {
+        return false;
+    }
+
+    JointArray current_position = {};
+    if (!readCurrentJointState(&current_position, nullptr))
+    {
+        std::cerr << "[robot] failed to read current joint state before joint trajectory pre-position\n";
+        return false;
+    }
+
+    constexpr double kFirstPointToleranceDeg = 0.1;
+    const double first_point_error = maxAbsJointDelta(current_position, trajectory->front().position);
+    if (first_point_error > kFirstPointToleranceDeg)
+    {
+        std::cout << "[robot] move current joint position to optimized trajectory first point first. "
+                  << "max_error=" << first_point_error
+                  << "deg duration=" << config_.position_move_time_sec << "s\n";
+
+        if (!positionControl(
+                trajectory->front().position,
+                JointArray{},
+                JointArray{},
+                config_.position_move_time_sec,
+                config_.command_time_sec))
+        {
+            return false;
+        }
+
+        const auto deadline = Clock::now() +
+                              std::chrono::duration_cast<Clock::duration>(
+                                  std::chrono::duration<double>(
+                                      static_cast<double>(config_.position_move_time_sec) + 5.0));
+        while (Clock::now() < deadline)
+        {
+            if (!realtime_control_running_ && !realtime_loop_running_)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (realtime_control_running_ || realtime_loop_running_)
+        {
+            std::cerr << "[robot] optimized trajectory first-point pre-position timed out\n";
+            stopRealtimeControl();
+            return false;
+        }
+
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+    }
+
+    if (!connectRealtimeControl())
+    {
+        return false;
+    }
+
+    if (!setJointTrajectoryPositionTarget(trajectory, command_time_sec))
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeLoop())
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeControl())
+    {
+        realtime_loop_running_ = false;
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+        stopRealtimeControl();
+        return false;
+    }
+
+    return true;
+}
+
+bool DoosanController::jointTrajectoryCsvVelocityControl(
+    const std::string &csv_path,
+    float command_time_sec,
+    float position_gain,
+    float max_joint_step_deg,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2,
+    float preposition_max_joint_velocity_deg_s,
+    float preposition_max_joint_acceleration_deg_s2)
+{
+    if (!servo_on_)
+    {
+        std::cerr << "[robot] jointTrajectoryCsvVelocityControl requires initialize()/servoOn()\n";
+        return false;
+    }
+
+    if (config_.system != RobotSystem::Real)
+    {
+        std::cerr << "[robot] jointTrajectoryCsvVelocityControl uses speedj_rt and requires real robot mode\n";
+        return false;
+    }
+
+    auto trajectory = std::make_shared<std::vector<JointTrajectoryPoint>>();
+    if (!loadJointTrajectoryCsv(
+            csv_path,
+            max_joint_step_deg > 0.0f ? max_joint_step_deg : 20.0f,
+            max_joint_velocity_deg_s > 0.0f ? max_joint_velocity_deg_s : 70.0f,
+            std::numeric_limits<float>::max(),
+            trajectory.get()))
+    {
+        return false;
+    }
+
+    JointArray current_position = {};
+    if (!readCurrentJointState(&current_position, nullptr))
+    {
+        std::cerr << "[robot] failed to read current joint state before joint velocity trajectory pre-position\n";
+        return false;
+    }
+
+    constexpr double kFirstPointToleranceDeg = 0.1;
+    const double first_point_error = maxAbsJointDelta(current_position, trajectory->front().position);
+    if (first_point_error > kFirstPointToleranceDeg)
+    {
+        JointArray preposition_velocity = {};
+        JointArray preposition_acceleration = {};
+        const float preposition_velocity_limit =
+            preposition_max_joint_velocity_deg_s > 0.0f ? preposition_max_joint_velocity_deg_s : 20.0f;
+        const float preposition_acceleration_limit =
+            preposition_max_joint_acceleration_deg_s2 > 0.0f ? preposition_max_joint_acceleration_deg_s2 : 150.0f;
+        preposition_velocity.fill(preposition_velocity_limit);
+        preposition_acceleration.fill(preposition_acceleration_limit);
+
+        const float preposition_timeout_sec = std::max(
+            15.0f,
+            config_.position_move_time_sec + 10.0f);
+
+        std::cout << "[robot] move current joint position to optimized velocity trajectory first point first. "
+                  << "max_error=" << first_point_error
+                  << "deg v_max=" << preposition_velocity_limit
+                  << "deg/s a_max=" << preposition_acceleration_limit
+                  << "deg/s^2 timeout=" << preposition_timeout_sec << "s\n";
+
+        if (!velocityControlToPosition(
+                trajectory->front().position,
+                preposition_velocity,
+                preposition_acceleration,
+                1.0f,
+                static_cast<float>(kFirstPointToleranceDeg),
+                preposition_timeout_sec,
+                config_.command_time_sec))
+        {
+            return false;
+        }
+
+        const auto deadline = Clock::now() +
+                              std::chrono::duration_cast<Clock::duration>(
+                                  std::chrono::duration<double>(
+                                      static_cast<double>(preposition_timeout_sec) + 5.0));
+        while (Clock::now() < deadline)
+        {
+            if (!realtime_control_running_ && !realtime_loop_running_)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (realtime_control_running_ || realtime_loop_running_)
+        {
+            std::cerr << "[robot] optimized velocity trajectory first-point pre-position timed out\n";
+            stopRealtimeControl();
+            return false;
+        }
+
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+    }
+
+    if (!connectRealtimeControl())
+    {
+        return false;
+    }
+
+    if (!setJointTrajectoryVelocityTarget(
+            trajectory,
+            command_time_sec,
+            position_gain,
+            max_joint_velocity_deg_s,
+            max_joint_acceleration_deg_s2))
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeLoop())
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeControl())
+    {
+        realtime_loop_running_ = false;
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+        stopRealtimeControl();
+        return false;
+    }
+
+    return true;
+}
+
+bool DoosanController::taskTrajectoryCsvVelocityControl(
+    const std::string &csv_path,
+    const std::string &urdf_path,
+    const std::string &tcp_frame,
+    float command_time_sec,
+    float position_gain,
+    float orientation_gain,
+    float damping,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2,
+    float max_joint_step_deg)
+{
+    if (!servo_on_)
+    {
+        std::cerr << "[robot] taskTrajectoryCsvVelocityControl requires initialize()/servoOn()\n";
+        return false;
+    }
+
+    if (config_.system != RobotSystem::Real)
+    {
+        std::cerr << "[robot] taskTrajectoryCsvVelocityControl uses speedj_rt and requires real robot mode\n";
+        return false;
+    }
+
+#if !DOOSAN_HAS_PINOCCHIO
+    (void)csv_path;
+    (void)urdf_path;
+    (void)tcp_frame;
+    (void)command_time_sec;
+    (void)position_gain;
+    (void)orientation_gain;
+    (void)damping;
+    (void)max_joint_velocity_deg_s;
+    (void)max_joint_acceleration_deg_s2;
+    (void)max_joint_step_deg;
+    std::cerr << "[robot] task trajectory velocity control requires Pinocchio. "
+              << "Install Pinocchio and reconfigure CMake.\n";
+    return false;
+#else
+    auto trajectory = std::make_shared<std::vector<TaskTrajectoryPoint>>();
+    if (!loadCartesianTaskTrajectoryCsv(csv_path, trajectory.get()))
+    {
+        return false;
+    }
+
+    pinocchio::Model model;
+    try
+    {
+        pinocchio::urdf::buildModel(urdf_path, model);
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[robot] failed to load URDF with Pinocchio: " << e.what() << '\n';
+        return false;
+    }
+
+    const std::string frame_name = tcp_frame.empty() ? "link_6" : tcp_frame;
+    if (!model.existFrame(frame_name))
+    {
+        std::cerr << "[robot] Pinocchio frame not found: " << frame_name << '\n';
+        return false;
+    }
+    if (model.nv != kNumJoints)
+    {
+        std::cerr << "[robot] Pinocchio model nv=" << model.nv
+                  << " but controller expects " << kNumJoints << " joints\n";
+        return false;
+    }
+
+    auto context = std::make_shared<CartesianVelocityContext>(model);
+    context->frame_id = model.getFrameId(frame_name);
+    context->frame_name = frame_name;
+
+    JointArray current_position = {};
+    if (!readCurrentJointState(&current_position, nullptr))
+    {
+        std::cerr << "[robot] failed to read current joint state before velocity trajectory pre-position\n";
+        return false;
+    }
+
+    JointArray first_joint = {};
+    int first_solution = -1;
+    if (!solveClosestIk(trajectory->front().doosan_task_pose, current_position, &first_joint, &first_solution))
+    {
+        std::cerr << "[robot] failed to solve IK for velocity trajectory first point\n";
+        return false;
+    }
+
+    constexpr double kFirstPointToleranceDeg = 0.1;
+    const double first_point_error = maxAbsJointDelta(current_position, first_joint);
+    if (first_point_error > kFirstPointToleranceDeg)
+    {
+        std::cout << "[robot] move current joint position to velocity trajectory first point first. "
+                  << "max_error=" << first_point_error
+                  << "deg solution=" << first_solution
+                  << " duration=" << config_.position_move_time_sec << "s\n";
+
+        if (!positionControl(
+                first_joint,
+                JointArray{},
+                JointArray{},
+                config_.position_move_time_sec,
+                config_.command_time_sec))
+        {
+            return false;
+        }
+
+        const auto deadline = Clock::now() +
+                              std::chrono::duration_cast<Clock::duration>(
+                                  std::chrono::duration<double>(
+                                      static_cast<double>(config_.position_move_time_sec) + 5.0));
+        while (Clock::now() < deadline)
+        {
+            if (!realtime_control_running_ && !realtime_loop_running_)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (realtime_control_running_ || realtime_loop_running_)
+        {
+            std::cerr << "[robot] velocity trajectory first-point pre-position timed out\n";
+            stopRealtimeControl();
+            return false;
+        }
+
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+    }
+
+    if (!connectRealtimeControl())
+    {
+        return false;
+    }
+
+    if (!setTaskVelocityTrajectoryTarget(
+            trajectory,
+            context,
+            command_time_sec,
+            position_gain,
+            orientation_gain,
+            damping,
+            max_joint_velocity_deg_s,
+            max_joint_acceleration_deg_s2))
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeLoop())
+    {
+        stopRealtimeControl();
+        return false;
+    }
+
+    if (!startRealtimeControl())
+    {
+        realtime_loop_running_ = false;
+        if (realtime_thread_.joinable())
+        {
+            realtime_thread_.join();
+        }
+        stopRealtimeControl();
+        return false;
+    }
+
+    std::cout << "[robot] task velocity trajectory started frame=" << frame_name
+              << " points=" << trajectory->size()
+              << " duration=" << trajectory->back().time_sec
+              << "s Kp=" << (position_gain > 0.0f ? position_gain : 8.0f)
+              << " Ko=" << (orientation_gain > 0.0f ? orientation_gain : 4.0f)
+              << " damping=" << (damping > 0.0f ? damping : 0.03f)
+              << '\n';
+    return true;
+#endif
 }
 
 bool DoosanController::connect(const Config &config)
@@ -1411,6 +2045,7 @@ bool DoosanController::loadTaskTrajectoryCsv(
     std::vector<double> times;
     std::vector<JointArray> positions;
     JointArray previous_joint = current_joint;
+    int previous_solution = -1;
     int previous_row_index = std::numeric_limits<int>::min();
     int parsed_rows = 0;
 
@@ -1475,11 +2110,16 @@ bool DoosanController::loadTaskTrajectoryCsv(
         double best_score = std::numeric_limits<double>::infinity();
         int best_status = std::numeric_limits<int>::max();
         int best_solution = -1;
+        bool used_fallback_search = positions.empty();
 
         {
             std::lock_guard<std::mutex> lock(drfl_mutex_);
-            for (int solution = 0; solution < 8; ++solution)
-            {
+            auto try_solution = [&](int solution, JointArray *candidate) {
+                if (!candidate)
+                {
+                    return false;
+                }
+
                 auto *response = drfl_.ikin(
                     task_pose.data(),
                     static_cast<unsigned char>(solution),
@@ -1487,27 +2127,63 @@ bool DoosanController::loadTaskTrajectoryCsv(
                     static_cast<unsigned char>(1));
                 if (!response)
                 {
-                    continue;
+                    return false;
                 }
 
                 best_status = std::min(best_status, response->_iStatus);
                 if (response->_iStatus != 0)
                 {
-                    continue;
+                    return false;
                 }
 
-                JointArray candidate = {};
                 for (int i = 0; i < kNumJoints; ++i)
                 {
-                    candidate[i] = response->_fTargetPos[i];
+                    (*candidate)[i] = response->_fTargetPos[i];
                 }
+                return true;
+            };
 
-                const double score = l2JointDelta(candidate, previous_joint);
-                if (score < best_score)
+            if (!positions.empty() && previous_solution >= 0)
+            {
+                JointArray candidate = {};
+                if (try_solution(previous_solution, &candidate))
                 {
-                    best_score = score;
-                    best_joint = candidate;
-                    best_solution = solution;
+                    const double max_step = maxAbsJointDelta(candidate, previous_joint);
+                    if (max_step <= static_cast<double>(max_joint_step_deg))
+                    {
+                        best_joint = candidate;
+                        best_score = l2JointDelta(candidate, previous_joint);
+                        best_solution = previous_solution;
+                    }
+                    else
+                    {
+                        used_fallback_search = true;
+                    }
+                }
+                else
+                {
+                    used_fallback_search = true;
+                }
+            }
+
+            if (best_solution < 0)
+            {
+                used_fallback_search = true;
+                for (int solution = 0; solution < 8; ++solution)
+                {
+                    JointArray candidate = {};
+                    if (!try_solution(solution, &candidate))
+                    {
+                        continue;
+                    }
+
+                    const double score = l2JointDelta(candidate, previous_joint);
+                    if (score < best_score)
+                    {
+                        best_score = score;
+                        best_joint = candidate;
+                        best_solution = solution;
+                    }
                 }
             }
 
@@ -1582,13 +2258,16 @@ bool DoosanController::loadTaskTrajectoryCsv(
         times.push_back(t);
         positions.push_back(best_joint);
         previous_joint = best_joint;
+        previous_solution = best_solution;
         ++parsed_rows;
 
         if (parsed_rows % 100 == 0)
         {
             std::cout << "[robot] IK progress rows=" << parsed_rows
                       << " latest_t=" << t
-                      << "s solution=" << best_solution << '\n';
+                      << "s solution=" << best_solution
+                      << " fallback=" << (used_fallback_search ? "yes" : "no")
+                      << '\n';
         }
     }
 
@@ -1687,9 +2366,504 @@ bool DoosanController::loadTaskTrajectoryCsv(
     std::cout << "[robot] loaded task trajectory CSV: " << csv_path
               << " points=" << trajectory->size()
               << " duration=" << trajectory->back().time_sec
+              << " max_qdot=" << max_velocity
+              << "deg/s max_qddot=" << max_acceleration
+              << "deg/s^2\n";
+    return true;
+}
+
+bool DoosanController::loadJointTrajectoryCsv(
+    const std::string &csv_path,
+    float max_joint_step_deg,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2,
+    std::vector<JointTrajectoryPoint> *trajectory)
+{
+    if (!trajectory)
+    {
+        return false;
+    }
+    trajectory->clear();
+
+    std::ifstream file(csv_path);
+    if (!file)
+    {
+        std::cerr << "[robot] failed to open joint trajectory CSV: " << csv_path << '\n';
+        return false;
+    }
+
+    std::string line;
+    if (!std::getline(file, line))
+    {
+        std::cerr << "[robot] empty joint trajectory CSV: " << csv_path << '\n';
+        return false;
+    }
+
+    const auto header = splitCsvLine(line);
+    std::unordered_map<std::string, std::size_t> columns;
+    for (std::size_t i = 0; i < header.size(); ++i)
+    {
+        columns[header[i]] = i;
+    }
+
+    if (columns.find("t") == columns.end())
+    {
+        std::cerr << "[robot] joint trajectory CSV missing column: t\n";
+        return false;
+    }
+
+    std::array<std::string, kNumJoints> position_columns = {};
+    std::array<std::string, kNumJoints> velocity_columns = {};
+    std::array<std::string, kNumJoints> acceleration_columns = {};
+    int velocity_column_count = 0;
+    int acceleration_column_count = 0;
+
+    for (int joint = 0; joint < kNumJoints; ++joint)
+    {
+        position_columns[joint] = findFirstColumn(columns, jointPositionColumnNames(joint));
+        if (position_columns[joint].empty())
+        {
+            std::cerr << "[robot] joint trajectory CSV missing q" << (joint + 1)
+                      << " column. Accepted examples: q" << (joint + 1)
+                      << ", q" << (joint + 1) << "_deg, joint_" << (joint + 1) << "\n";
+            return false;
+        }
+
+        velocity_columns[joint] = findFirstColumn(columns, jointVelocityColumnNames(joint));
+        if (!velocity_columns[joint].empty())
+        {
+            ++velocity_column_count;
+        }
+
+        acceleration_columns[joint] = findFirstColumn(columns, jointAccelerationColumnNames(joint));
+        if (!acceleration_columns[joint].empty())
+        {
+            ++acceleration_column_count;
+        }
+    }
+
+    if (velocity_column_count != 0 && velocity_column_count != kNumJoints)
+    {
+        std::cerr << "[robot] joint trajectory CSV must provide all velocity columns or none\n";
+        return false;
+    }
+    if (acceleration_column_count != 0 && acceleration_column_count != kNumJoints)
+    {
+        std::cerr << "[robot] joint trajectory CSV must provide all acceleration columns or none\n";
+        return false;
+    }
+
+    const bool has_velocity = velocity_column_count == kNumJoints;
+    const bool has_acceleration = acceleration_column_count == kNumJoints;
+
+    std::vector<double> times;
+    std::vector<JointArray> positions;
+    std::vector<JointArray> velocities;
+    std::vector<JointArray> accelerations;
+    int parsed_rows = 0;
+
+    while (std::getline(file, line))
+    {
+        if (trim(line).empty())
+        {
+            continue;
+        }
+
+        const auto fields = splitCsvLine(line);
+        double t = 0.0;
+        if (!parseDouble(fields, columns, "t", &t))
+        {
+            std::cerr << "[robot] invalid t in joint trajectory CSV row: " << line << '\n';
+            return false;
+        }
+        if (!times.empty() && t <= times.back())
+        {
+            std::cerr << "[robot] joint trajectory time must be strictly increasing. "
+                      << "t=" << t << " previous=" << times.back() << '\n';
+            return false;
+        }
+
+        JointArray position = {};
+        JointArray velocity = {};
+        JointArray acceleration = {};
+        for (int joint = 0; joint < kNumJoints; ++joint)
+        {
+            double value = 0.0;
+            if (!parseDouble(fields, columns, position_columns[joint], &value))
+            {
+                std::cerr << "[robot] invalid q" << (joint + 1)
+                          << " in joint trajectory CSV row: " << line << '\n';
+                return false;
+            }
+            position[joint] = static_cast<float>(value);
+
+            if (has_velocity)
+            {
+                if (!parseDouble(fields, columns, velocity_columns[joint], &value))
+                {
+                    std::cerr << "[robot] invalid qd" << (joint + 1)
+                              << " in joint trajectory CSV row: " << line << '\n';
+                    return false;
+                }
+                velocity[joint] = static_cast<float>(value);
+            }
+
+            if (has_acceleration)
+            {
+                if (!parseDouble(fields, columns, acceleration_columns[joint], &value))
+                {
+                    std::cerr << "[robot] invalid qdd" << (joint + 1)
+                              << " in joint trajectory CSV row: " << line << '\n';
+                    return false;
+                }
+                acceleration[joint] = static_cast<float>(value);
+            }
+        }
+
+        if (!positions.empty())
+        {
+            const double max_step = maxAbsJointDelta(position, positions.back());
+            if (max_step > static_cast<double>(max_joint_step_deg))
+            {
+                std::cerr << "[robot] joint trajectory continuity check failed at row "
+                          << parsed_rows << " max_joint_step=" << max_step
+                          << "deg limit=" << max_joint_step_deg << "deg\n";
+                return false;
+            }
+        }
+
+        times.push_back(t);
+        positions.push_back(position);
+        velocities.push_back(velocity);
+        accelerations.push_back(acceleration);
+        ++parsed_rows;
+    }
+
+    if (positions.size() < 2)
+    {
+        std::cerr << "[robot] joint trajectory CSV needs at least two points\n";
+        return false;
+    }
+
+    if (!has_velocity)
+    {
+        velocities.assign(positions.size(), JointArray{});
+        for (std::size_t idx = 0; idx < positions.size(); ++idx)
+        {
+            const std::size_t lo = idx == 0 ? 0 : idx - 1;
+            const std::size_t hi = idx + 1 < positions.size() ? idx + 1 : idx;
+            const double dt = times[hi] - times[lo];
+            if (dt <= 0.0)
+            {
+                std::cerr << "[robot] invalid dt while calculating joint qdot\n";
+                return false;
+            }
+            for (int joint = 0; joint < kNumJoints; ++joint)
+            {
+                velocities[idx][joint] = static_cast<float>(
+                    (static_cast<double>(positions[hi][joint]) -
+                     static_cast<double>(positions[lo][joint])) /
+                    dt);
+            }
+        }
+    }
+
+    if (!has_acceleration)
+    {
+        accelerations.assign(positions.size(), JointArray{});
+        for (std::size_t idx = 0; idx < positions.size(); ++idx)
+        {
+            const std::size_t lo = idx == 0 ? 0 : idx - 1;
+            const std::size_t hi = idx + 1 < positions.size() ? idx + 1 : idx;
+            const double dt = times[hi] - times[lo];
+            if (dt <= 0.0)
+            {
+                std::cerr << "[robot] invalid dt while calculating joint qddot\n";
+                return false;
+            }
+            for (int joint = 0; joint < kNumJoints; ++joint)
+            {
+                accelerations[idx][joint] = static_cast<float>(
+                    (static_cast<double>(velocities[hi][joint]) -
+                     static_cast<double>(velocities[lo][joint])) /
+                    dt);
+            }
+        }
+    }
+
+    double max_velocity = 0.0;
+    double max_acceleration = 0.0;
+    for (std::size_t idx = 0; idx < positions.size(); ++idx)
+    {
+        for (int joint = 0; joint < kNumJoints; ++joint)
+        {
+            max_velocity = std::max(max_velocity, std::fabs(static_cast<double>(velocities[idx][joint])));
+            max_acceleration = std::max(max_acceleration, std::fabs(static_cast<double>(accelerations[idx][joint])));
+        }
+    }
+
+    if (max_velocity > static_cast<double>(max_joint_velocity_deg_s))
+    {
+        std::cerr << "[robot] optimized qdot check failed max=" << max_velocity
+                  << "deg/s limit=" << max_joint_velocity_deg_s << "deg/s\n";
+        return false;
+    }
+    if (max_acceleration > static_cast<double>(max_joint_acceleration_deg_s2))
+    {
+        std::cerr << "[robot] optimized qddot check failed max=" << max_acceleration
+                  << "deg/s^2 limit=" << max_joint_acceleration_deg_s2 << "deg/s^2\n";
+        return false;
+    }
+
+    trajectory->reserve(positions.size());
+    for (std::size_t idx = 0; idx < positions.size(); ++idx)
+    {
+        JointTrajectoryPoint point;
+        point.time_sec = times[idx] - times.front();
+        point.position = positions[idx];
+        point.velocity = velocities[idx];
+        point.acceleration = accelerations[idx];
+        trajectory->push_back(point);
+    }
+
+    trajectory->front().time_sec = 0.0;
+    trajectory->front().velocity.fill(0.0f);
+    trajectory->front().acceleration.fill(0.0f);
+    trajectory->back().velocity.fill(0.0f);
+    trajectory->back().acceleration.fill(0.0f);
+
+    std::cout << "[robot] loaded optimized joint trajectory CSV: " << csv_path
+              << " points=" << trajectory->size()
+              << " duration=" << trajectory->back().time_sec
               << "s max_qdot=" << max_velocity
               << "deg/s max_qddot=" << max_acceleration
               << "deg/s^2\n";
+    return true;
+}
+
+bool DoosanController::loadCartesianTaskTrajectoryCsv(
+    const std::string &csv_path,
+    std::vector<TaskTrajectoryPoint> *trajectory)
+{
+    if (!trajectory)
+    {
+        return false;
+    }
+    trajectory->clear();
+
+    std::ifstream file(csv_path);
+    if (!file)
+    {
+        std::cerr << "[robot] failed to open task trajectory CSV: " << csv_path << '\n';
+        return false;
+    }
+
+    std::string line;
+    if (!std::getline(file, line))
+    {
+        std::cerr << "[robot] empty task trajectory CSV: " << csv_path << '\n';
+        return false;
+    }
+
+    const auto header = splitCsvLine(line);
+    std::unordered_map<std::string, std::size_t> columns;
+    for (std::size_t i = 0; i < header.size(); ++i)
+    {
+        columns[header[i]] = i;
+    }
+
+    const char *required[] = {
+        "t",
+        "position_x",
+        "position_y",
+        "position_z",
+        "orientation_x",
+        "orientation_y",
+        "orientation_z",
+        "orientation_w",
+        "linear_velocity_x",
+        "linear_velocity_y",
+        "linear_velocity_z",
+        "angular_velocity_x",
+        "angular_velocity_y",
+        "angular_velocity_z"};
+    for (const auto *name : required)
+    {
+        if (columns.find(name) == columns.end())
+        {
+            std::cerr << "[robot] task trajectory CSV missing column: " << name << '\n';
+            return false;
+        }
+    }
+
+    int previous_row_index = std::numeric_limits<int>::min();
+    double first_t = 0.0;
+    double previous_t = -std::numeric_limits<double>::infinity();
+    int parsed_rows = 0;
+
+    while (std::getline(file, line))
+    {
+        if (trim(line).empty())
+        {
+            continue;
+        }
+
+        const auto fields = splitCsvLine(line);
+        double t = 0.0;
+        double px = 0.0;
+        double py = 0.0;
+        double pz = 0.0;
+        double qx = 0.0;
+        double qy = 0.0;
+        double qz = 0.0;
+        double qw = 1.0;
+        double vx = 0.0;
+        double vy = 0.0;
+        double vz = 0.0;
+        double wx = 0.0;
+        double wy = 0.0;
+        double wz = 0.0;
+        if (!parseDouble(fields, columns, "t", &t) ||
+            !parseDouble(fields, columns, "position_x", &px) ||
+            !parseDouble(fields, columns, "position_y", &py) ||
+            !parseDouble(fields, columns, "position_z", &pz) ||
+            !parseDouble(fields, columns, "orientation_x", &qx) ||
+            !parseDouble(fields, columns, "orientation_y", &qy) ||
+            !parseDouble(fields, columns, "orientation_z", &qz) ||
+            !parseDouble(fields, columns, "orientation_w", &qw) ||
+            !parseDouble(fields, columns, "linear_velocity_x", &vx) ||
+            !parseDouble(fields, columns, "linear_velocity_y", &vy) ||
+            !parseDouble(fields, columns, "linear_velocity_z", &vz) ||
+            !parseDouble(fields, columns, "angular_velocity_x", &wx) ||
+            !parseDouble(fields, columns, "angular_velocity_y", &wy) ||
+            !parseDouble(fields, columns, "angular_velocity_z", &wz))
+        {
+            std::cerr << "[robot] invalid numeric task trajectory CSV row: " << line << '\n';
+            return false;
+        }
+
+        if (columns.find("row_index") != columns.end())
+        {
+            double row_value = 0.0;
+            if (parseDouble(fields, columns, "row_index", &row_value))
+            {
+                const int row_index = static_cast<int>(row_value);
+                if (previous_row_index == std::numeric_limits<int>::min())
+                {
+                    previous_row_index = row_index;
+                }
+                else if (row_index != previous_row_index)
+                {
+                    std::cerr << "[robot] CSV contains multiple row_index values. "
+                              << "Pass one trajectory_XXX.csv file at a time.\n";
+                    return false;
+                }
+            }
+        }
+
+        if (parsed_rows == 0)
+        {
+            first_t = t;
+        }
+        else if (t <= previous_t)
+        {
+            std::cerr << "[robot] task trajectory time must be strictly increasing. "
+                      << "t=" << t << " previous=" << previous_t << '\n';
+            return false;
+        }
+
+        const std::array<double, 3> current_position = {px, py, pz};
+        TaskTrajectoryPoint point;
+        point.time_sec = t - first_t;
+        point.position = current_position;
+        point.rotation = quaternionXyzwToRotation(qx, qy, qz, qw);
+        point.linear_velocity = {vx, vy, vz};
+        point.angular_velocity = {wx, wy, wz};
+        point.doosan_task_pose = taskPoseFromCsvPoseMetersAndQuatXyzw(px, py, pz, qx, qy, qz, qw);
+
+        trajectory->push_back(point);
+        previous_t = t;
+        ++parsed_rows;
+    }
+
+    if (trajectory->size() < 2)
+    {
+        std::cerr << "[robot] task trajectory CSV needs at least two points\n";
+        return false;
+    }
+
+    trajectory->front().time_sec = 0.0;
+    std::cout << "[robot] loaded cartesian task trajectory CSV: " << csv_path
+              << " points=" << trajectory->size()
+              << " duration=" << trajectory->back().time_sec << "s\n";
+    return true;
+}
+
+bool DoosanController::solveClosestIk(
+    const std::array<float, kNumJoints> &task_pose,
+    const JointArray &reference_joint,
+    JointArray *joint,
+    int *solution_space)
+{
+    if (!joint)
+    {
+        return false;
+    }
+
+    JointArray best_joint = {};
+    double best_score = std::numeric_limits<double>::infinity();
+    int best_solution = -1;
+    int best_status = std::numeric_limits<int>::max();
+
+    std::lock_guard<std::mutex> lock(drfl_mutex_);
+    for (int solution = 0; solution < 8; ++solution)
+    {
+        auto *response = drfl_.ikin(
+            const_cast<float *>(task_pose.data()),
+            static_cast<unsigned char>(solution),
+            COORDINATE_SYSTEM_BASE,
+            static_cast<unsigned char>(1));
+        if (!response)
+        {
+            continue;
+        }
+
+        best_status = std::min(best_status, response->_iStatus);
+        if (response->_iStatus != 0)
+        {
+            continue;
+        }
+
+        JointArray candidate = {};
+        for (int i = 0; i < kNumJoints; ++i)
+        {
+            candidate[i] = response->_fTargetPos[i];
+        }
+
+        const double score = l2JointDelta(candidate, reference_joint);
+        if (score < best_score)
+        {
+            best_score = score;
+            best_joint = candidate;
+            best_solution = solution;
+        }
+    }
+
+    if (best_solution < 0)
+    {
+        std::cerr << "[robot] closest IK failed status=" << best_status << " task_pose(mm,deg)=";
+        for (int i = 0; i < kNumJoints; ++i)
+        {
+            std::cerr << task_pose[i] << (i + 1 < kNumJoints ? ", " : "\n");
+        }
+        return false;
+    }
+
+    *joint = best_joint;
+    if (solution_space)
+    {
+        *solution_space = best_solution;
+    }
     return true;
 }
 
@@ -1745,6 +2919,108 @@ bool DoosanController::setJointTrajectoryPositionTarget(
     std::cout << "[robot] task trajectory target ready duration="
               << next_command.trajectory_duration_sec
               << "s tt=" << next_command.command_time_sec << "s\n";
+    return true;
+}
+
+bool DoosanController::setJointTrajectoryVelocityTarget(
+    std::shared_ptr<const std::vector<JointTrajectoryPoint>> trajectory,
+    float command_time_sec,
+    float position_gain,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2)
+{
+    if (!trajectory || trajectory->empty())
+    {
+        std::cerr << "[robot] empty joint velocity trajectory target\n";
+        return false;
+    }
+
+    Command next_command;
+    next_command.mode = CommandMode::JointVelocityTrajectory;
+    next_command.command_time_sec = commandTimeOrDefault(command_time_sec, config_.command_time_sec);
+    next_command.trajectory_active = true;
+    next_command.stop_rt_when_done = true;
+    next_command.trajectory_start = Clock::now();
+    next_command.trajectory_duration_sec = static_cast<float>(trajectory->back().time_sec);
+    next_command.position_gain = position_gain > 0.0f ? position_gain : 4.0f;
+    next_command.max_joint_velocity_deg_s =
+        max_joint_velocity_deg_s > 0.0f ? max_joint_velocity_deg_s : 70.0f;
+    next_command.max_joint_acceleration_deg_s2 =
+        max_joint_acceleration_deg_s2 > 0.0f ? max_joint_acceleration_deg_s2 : 500.0f;
+    next_command.position = trajectory->front().position;
+    next_command.velocity = trajectory->front().velocity;
+    next_command.acceleration = trajectory->front().acceleration;
+    next_command.target_position = trajectory->back().position;
+    next_command.joint_trajectory = trajectory;
+    next_command.previous_velocity_command.fill(0.0f);
+    next_command.velocity_target_last_update = Clock::now();
+
+    {
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        command_ = next_command;
+    }
+
+    std::cout << "[robot] joint velocity trajectory target ready duration="
+              << next_command.trajectory_duration_sec
+              << "s tt=" << next_command.command_time_sec
+              << "s Kp=" << next_command.position_gain
+              << " max_qdot=" << next_command.max_joint_velocity_deg_s
+              << "deg/s max_qddot=" << next_command.max_joint_acceleration_deg_s2
+              << "deg/s^2\n";
+    return true;
+}
+
+bool DoosanController::setTaskVelocityTrajectoryTarget(
+    std::shared_ptr<const std::vector<TaskTrajectoryPoint>> trajectory,
+    std::shared_ptr<CartesianVelocityContext> context,
+    float command_time_sec,
+    float position_gain,
+    float orientation_gain,
+    float damping,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2)
+{
+    if (!trajectory || trajectory->empty())
+    {
+        std::cerr << "[robot] empty task velocity trajectory target\n";
+        return false;
+    }
+    if (!context)
+    {
+        std::cerr << "[robot] missing cartesian velocity context\n";
+        return false;
+    }
+
+    Command next_command;
+    next_command.mode = CommandMode::TaskVelocityTrajectory;
+    next_command.command_time_sec = commandTimeOrDefault(command_time_sec, config_.command_time_sec);
+    next_command.trajectory_active = true;
+    next_command.stop_rt_when_done = true;
+    next_command.trajectory_start = Clock::now();
+    next_command.trajectory_duration_sec = static_cast<float>(trajectory->back().time_sec);
+    next_command.position_gain = position_gain > 0.0f ? position_gain : 8.0f;
+    next_command.orientation_gain = orientation_gain > 0.0f ? orientation_gain : 4.0f;
+    next_command.damping = damping > 0.0f ? damping : 0.03f;
+    next_command.max_joint_velocity_deg_s =
+        max_joint_velocity_deg_s > 0.0f ? max_joint_velocity_deg_s : 70.0f;
+    next_command.max_joint_acceleration_deg_s2 =
+        max_joint_acceleration_deg_s2 > 0.0f ? max_joint_acceleration_deg_s2 : 500.0f;
+    next_command.velocity_target_last_update = Clock::now();
+    next_command.task_trajectory = trajectory;
+    next_command.cartesian_velocity_context = context;
+    next_command.previous_velocity_command.fill(0.0f);
+
+    {
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        command_ = next_command;
+    }
+
+    std::cout << "[robot] task velocity trajectory target ready duration="
+              << next_command.trajectory_duration_sec
+              << "s tt=" << next_command.command_time_sec
+              << "s max_qdot=" << next_command.max_joint_velocity_deg_s
+              << "deg/s max_qddot=" << next_command.max_joint_acceleration_deg_s2
+              << "deg/s^2\n";
     return true;
 }
 
@@ -1917,6 +3193,318 @@ void DoosanController::realtimeLoop()
                 command_.acceleration = acceleration;
                 command_.joint_trajectory.reset();
                 realtime_loop_running_ = false;
+            }
+        }
+        else if (command_snapshot.mode == CommandMode::JointVelocityTrajectory)
+        {
+            JointArray current_position = command_snapshot.position;
+            JointArray position_ref = command_snapshot.position;
+            JointArray velocity_ref = command_snapshot.velocity;
+            JointArray velocity = {};
+            JointArray acceleration = {};
+            bool trajectory_done = false;
+            const auto now = Clock::now();
+            double dt = static_cast<double>(config_.rt_period_sec);
+            if (command_snapshot.velocity_target_last_update != Clock::time_point{})
+            {
+                dt = std::max(
+                    std::chrono::duration<double>(
+                        now - command_snapshot.velocity_target_last_update)
+                        .count(),
+                    static_cast<double>(config_.rt_period_sec));
+            }
+
+            const auto trajectory = command_snapshot.joint_trajectory;
+            const double elapsed_sec = std::chrono::duration<double>(
+                now - command_snapshot.trajectory_start)
+                                           .count();
+
+            if (!trajectory || trajectory->empty())
+            {
+                trajectory_done = true;
+            }
+            else
+            {
+                const double duration = trajectory->back().time_sec;
+                trajectory_done = elapsed_sec >= duration;
+
+                if (trajectory_done || trajectory->size() == 1)
+                {
+                    position_ref = trajectory->back().position;
+                    velocity_ref.fill(0.0f);
+                }
+                else
+                {
+                    const auto upper = std::lower_bound(
+                        trajectory->begin(),
+                        trajectory->end(),
+                        elapsed_sec,
+                        [](const JointTrajectoryPoint &point, double t) {
+                            return point.time_sec < t;
+                        });
+
+                    if (upper == trajectory->begin())
+                    {
+                        position_ref = upper->position;
+                        velocity_ref = upper->velocity;
+                    }
+                    else if (upper == trajectory->end())
+                    {
+                        position_ref = trajectory->back().position;
+                        velocity_ref = trajectory->back().velocity;
+                    }
+                    else
+                    {
+                        const auto lower = upper - 1;
+                        const double segment_dt = std::max(
+                            upper->time_sec - lower->time_sec,
+                            1.0e-9);
+                        const double alpha = (elapsed_sec - lower->time_sec) / segment_dt;
+                        position_ref = interpolateJointArray(lower->position, upper->position, alpha);
+                        velocity_ref = interpolateJointArray(lower->velocity, upper->velocity, alpha);
+                    }
+                }
+            }
+
+            if (!trajectory_done)
+            {
+                if (!readCurrentJointState(&current_position, nullptr))
+                {
+                    std::cerr << "[robot] failed to read current joint state during joint velocity trajectory\n";
+                    current_position = command_snapshot.position;
+                }
+
+                for (int i = 0; i < kNumJoints; ++i)
+                {
+                    const double position_error =
+                        static_cast<double>(position_ref[i]) -
+                        static_cast<double>(current_position[i]);
+                    velocity[i] = static_cast<float>(
+                        static_cast<double>(velocity_ref[i]) +
+                        static_cast<double>(command_snapshot.position_gain) * position_error);
+                }
+
+                velocity = clampJointArray(
+                    velocity,
+                    static_cast<double>(command_snapshot.max_joint_velocity_deg_s));
+
+                for (int i = 0; i < kNumJoints; ++i)
+                {
+                    const double raw_acceleration =
+                        (static_cast<double>(velocity[i]) -
+                         static_cast<double>(command_snapshot.previous_velocity_command[i])) /
+                        std::max(dt, 1.0e-6);
+                    const double limited_acceleration = std::clamp(
+                        raw_acceleration,
+                        -static_cast<double>(command_snapshot.max_joint_acceleration_deg_s2),
+                        static_cast<double>(command_snapshot.max_joint_acceleration_deg_s2));
+                    acceleration[i] = static_cast<float>(limited_acceleration);
+                    if (std::fabs(raw_acceleration - limited_acceleration) > 1.0e-9)
+                    {
+                        velocity[i] = static_cast<float>(
+                            static_cast<double>(command_snapshot.previous_velocity_command[i]) +
+                            limited_acceleration * dt);
+                    }
+                }
+            }
+
+            if (trajectory_done)
+            {
+                velocity.fill(0.0f);
+                acceleration.fill(0.0f);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(drfl_mutex_);
+                drfl_.speedj_rt(
+                    velocity.data(),
+                    acceleration.data(),
+                    command_snapshot.command_time_sec);
+            }
+
+            if (trajectory_done && command_snapshot.stop_rt_when_done)
+            {
+                std::cout << "[robot] joint velocity trajectory done\n";
+                std::lock_guard<std::mutex> command_lock(command_mutex_);
+                command_.mode = CommandMode::Hold;
+                command_.trajectory_active = false;
+                command_.stop_rt_when_done = false;
+                command_.position = current_position;
+                command_.velocity = velocity;
+                command_.acceleration = acceleration;
+                command_.previous_velocity_command = velocity;
+                command_.joint_trajectory.reset();
+                realtime_loop_running_ = false;
+            }
+            else
+            {
+                std::lock_guard<std::mutex> command_lock(command_mutex_);
+                if (command_.mode == CommandMode::JointVelocityTrajectory)
+                {
+                    command_.position = current_position;
+                    command_.velocity = velocity;
+                    command_.acceleration = acceleration;
+                    command_.previous_velocity_command = velocity;
+                    command_.velocity_target_last_update = now;
+                }
+            }
+        }
+        else if (command_snapshot.mode == CommandMode::TaskVelocityTrajectory)
+        {
+            JointArray current_position = command_snapshot.position;
+            JointArray velocity = {};
+            JointArray acceleration = {};
+            bool trajectory_done = false;
+            const auto now = Clock::now();
+            double dt = static_cast<double>(config_.rt_period_sec);
+            if (command_snapshot.velocity_target_last_update != Clock::time_point{})
+            {
+                dt = std::max(
+                    std::chrono::duration<double>(
+                        now - command_snapshot.velocity_target_last_update)
+                        .count(),
+                    static_cast<double>(config_.rt_period_sec));
+            }
+
+            const auto trajectory = command_snapshot.task_trajectory;
+            const auto context = command_snapshot.cartesian_velocity_context;
+            const double elapsed_sec = std::chrono::duration<double>(
+                now - command_snapshot.trajectory_start)
+                                           .count();
+
+            if (!trajectory || trajectory->empty() || !context)
+            {
+                trajectory_done = true;
+            }
+            else
+            {
+                trajectory_done = elapsed_sec >= trajectory->back().time_sec;
+            }
+
+#if DOOSAN_HAS_PINOCCHIO
+            if (!trajectory_done)
+            {
+                if (!readCurrentJointState(&current_position, nullptr))
+                {
+                    std::cerr << "[robot] failed to read current joint state during task velocity trajectory\n";
+                    current_position = command_snapshot.position;
+                }
+
+                Eigen::VectorXd q_rad(context->model.nq);
+                for (int i = 0; i < kNumJoints; ++i)
+                {
+                    q_rad[i] = degToRad(static_cast<double>(current_position[i]));
+                }
+
+                pinocchio::forwardKinematics(context->model, context->data, q_rad);
+                pinocchio::updateFramePlacements(context->model, context->data);
+
+                const auto ref = interpolateTaskTrajectoryPoint(*trajectory, elapsed_sec);
+                const auto &current_pose = context->data.oMf[context->frame_id];
+                const Eigen::Vector3d p_cur = current_pose.translation();
+                const Eigen::Matrix3d R_cur = current_pose.rotation();
+                const Eigen::Vector3d p_ref = vectorFromArray3(ref.position);
+                const Eigen::Matrix3d R_ref = rotationFromRowMajor(ref.rotation);
+                const Eigen::Vector3d v_ref = vectorFromArray3(ref.linear_velocity);
+                const Eigen::Vector3d w_ref = vectorFromArray3(ref.angular_velocity);
+
+                const Eigen::Vector3d e_pos = p_ref - p_cur;
+                const Eigen::Vector3d e_rot = pinocchio::log3(R_ref * R_cur.transpose());
+
+                Eigen::Matrix<double, 6, 1> v_cmd;
+                v_cmd.head<3>() = v_ref + static_cast<double>(command_snapshot.position_gain) * e_pos;
+                v_cmd.tail<3>() = w_ref + static_cast<double>(command_snapshot.orientation_gain) * e_rot;
+
+                Eigen::Matrix<double, 6, Eigen::Dynamic> jacobian(6, context->model.nv);
+                jacobian.setZero();
+                pinocchio::computeFrameJacobian(
+                    context->model,
+                    context->data,
+                    q_rad,
+                    context->frame_id,
+                    pinocchio::LOCAL_WORLD_ALIGNED,
+                    jacobian);
+
+                const double lambda = std::max(static_cast<double>(command_snapshot.damping), 1.0e-6);
+                const Eigen::Matrix<double, 6, 6> system =
+                    jacobian * jacobian.transpose() +
+                    lambda * lambda * Eigen::Matrix<double, 6, 6>::Identity();
+                const Eigen::VectorXd qdot_rad =
+                    jacobian.transpose() * system.ldlt().solve(v_cmd);
+
+                JointArray unclamped_velocity = {};
+                for (int i = 0; i < kNumJoints; ++i)
+                {
+                    unclamped_velocity[i] = static_cast<float>(radToDeg(qdot_rad[i]));
+                }
+
+                velocity = clampJointArray(
+                    unclamped_velocity,
+                    static_cast<double>(command_snapshot.max_joint_velocity_deg_s));
+
+                for (int i = 0; i < kNumJoints; ++i)
+                {
+                    const double raw_acceleration =
+                        (static_cast<double>(velocity[i]) -
+                         static_cast<double>(command_snapshot.previous_velocity_command[i])) /
+                        std::max(dt, 1.0e-6);
+                    const double limited_acceleration = std::clamp(
+                        raw_acceleration,
+                        -static_cast<double>(command_snapshot.max_joint_acceleration_deg_s2),
+                        static_cast<double>(command_snapshot.max_joint_acceleration_deg_s2));
+                    acceleration[i] = static_cast<float>(limited_acceleration);
+                    if (std::fabs(raw_acceleration - limited_acceleration) > 1.0e-9)
+                    {
+                        velocity[i] = static_cast<float>(
+                            static_cast<double>(command_snapshot.previous_velocity_command[i]) +
+                            limited_acceleration * dt);
+                    }
+                }
+            }
+#else
+            trajectory_done = true;
+#endif
+
+            if (trajectory_done)
+            {
+                velocity.fill(0.0f);
+                acceleration.fill(0.0f);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(drfl_mutex_);
+                drfl_.speedj_rt(
+                    velocity.data(),
+                    acceleration.data(),
+                    command_snapshot.command_time_sec);
+            }
+
+            if (trajectory_done && command_snapshot.stop_rt_when_done)
+            {
+                std::cout << "[robot] task velocity trajectory done\n";
+                std::lock_guard<std::mutex> command_lock(command_mutex_);
+                command_.mode = CommandMode::Hold;
+                command_.trajectory_active = false;
+                command_.stop_rt_when_done = false;
+                command_.position = current_position;
+                command_.velocity = velocity;
+                command_.acceleration = acceleration;
+                command_.previous_velocity_command = velocity;
+                command_.task_trajectory.reset();
+                command_.cartesian_velocity_context.reset();
+                realtime_loop_running_ = false;
+            }
+            else
+            {
+                std::lock_guard<std::mutex> command_lock(command_mutex_);
+                if (command_.mode == CommandMode::TaskVelocityTrajectory)
+                {
+                    command_.position = current_position;
+                    command_.velocity = velocity;
+                    command_.acceleration = acceleration;
+                    command_.previous_velocity_command = velocity;
+                    command_.velocity_target_last_update = now;
+                }
             }
         }
         else if (command_snapshot.mode == CommandMode::JointVelocity)

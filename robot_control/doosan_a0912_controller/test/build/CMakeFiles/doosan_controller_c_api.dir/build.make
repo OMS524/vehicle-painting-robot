@@ -96,6 +96,20 @@ libdoosan_controller_c_api.so: libdoosan_controller.a
 libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libDRFL.a
 libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoFoundation.so
 libdoosan_controller_c_api.so: ../../API-DRFL/library/Linux/64bits/amd64/22.04/libPocoNet.so
+libdoosan_controller_c_api.so: /opt/openrobots/lib/libpinocchio_parsers.so.3.9.0
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liburdfdom_sensor.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liburdfdom_model_state.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liburdfdom_model.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liburdfdom_world.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/libconsole_bridge.so.1.0
+libdoosan_controller_c_api.so: /opt/openrobots/lib/libpinocchio_collision.so.3.9.0
+libdoosan_controller_c_api.so: /opt/openrobots/lib/libpinocchio_visualizers.so.3.9.0
+libdoosan_controller_c_api.so: /opt/openrobots/lib/libpinocchio_default.so.3.9.0
+libdoosan_controller_c_api.so: /opt/openrobots/lib/libcoal.so.3.0.2
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/libboost_filesystem.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/libboost_serialization.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liboctomap.so
+libdoosan_controller_c_api.so: /usr/lib/x86_64-linux-gnu/liboctomath.so
 libdoosan_controller_c_api.so: CMakeFiles/doosan_controller_c_api.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/oms/vehicle-painting-robot/robot_control/doosan_a0912_controller/test/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX shared library libdoosan_controller_c_api.so"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/doosan_controller_c_api.dir/link.txt --verbose=$(VERBOSE)

@@ -300,6 +300,133 @@ int doosan_controller_task_trajectory_csv_position_control(
     return 0;
 }
 
+int doosan_controller_joint_trajectory_csv_position_control(
+    void *handle,
+    const char *csv_path,
+    float command_time_sec,
+    float max_joint_step_deg,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2)
+{
+    try
+    {
+        auto *controller = asController(handle);
+        if (!controller || !csv_path)
+        {
+            return 0;
+        }
+
+        return controller->jointTrajectoryCsvPositionControl(
+                   csv_path,
+                   command_time_sec,
+                   max_joint_step_deg,
+                   max_joint_velocity_deg_s,
+                   max_joint_acceleration_deg_s2)
+                   ? 1
+                   : 0;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[c_api] joint_trajectory_csv_position_control failed: "
+                  << e.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[c_api] joint_trajectory_csv_position_control failed with unknown exception\n";
+    }
+    return 0;
+}
+
+int doosan_controller_joint_trajectory_csv_velocity_control(
+    void *handle,
+    const char *csv_path,
+    float command_time_sec,
+    float position_gain,
+    float max_joint_step_deg,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2,
+    float preposition_max_joint_velocity_deg_s,
+    float preposition_max_joint_acceleration_deg_s2)
+{
+    try
+    {
+        auto *controller = asController(handle);
+        if (!controller || !csv_path)
+        {
+            return 0;
+        }
+
+        return controller->jointTrajectoryCsvVelocityControl(
+                   csv_path,
+                   command_time_sec,
+                   position_gain,
+                   max_joint_step_deg,
+                   max_joint_velocity_deg_s,
+                   max_joint_acceleration_deg_s2,
+                   preposition_max_joint_velocity_deg_s,
+                   preposition_max_joint_acceleration_deg_s2)
+                   ? 1
+                   : 0;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[c_api] joint_trajectory_csv_velocity_control failed: "
+                  << e.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[c_api] joint_trajectory_csv_velocity_control failed with unknown exception\n";
+    }
+    return 0;
+}
+
+int doosan_controller_task_trajectory_csv_velocity_control(
+    void *handle,
+    const char *csv_path,
+    const char *urdf_path,
+    const char *tcp_frame,
+    float command_time_sec,
+    float position_gain,
+    float orientation_gain,
+    float damping,
+    float max_joint_velocity_deg_s,
+    float max_joint_acceleration_deg_s2,
+    float max_joint_step_deg)
+{
+    try
+    {
+        auto *controller = asController(handle);
+        if (!controller || !csv_path || !urdf_path)
+        {
+            return 0;
+        }
+
+        return controller->taskTrajectoryCsvVelocityControl(
+                   csv_path,
+                   urdf_path,
+                   tcp_frame ? tcp_frame : "link_6",
+                   command_time_sec,
+                   position_gain,
+                   orientation_gain,
+                   damping,
+                   max_joint_velocity_deg_s,
+                   max_joint_acceleration_deg_s2,
+                   max_joint_step_deg)
+                   ? 1
+                   : 0;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[c_api] task_trajectory_csv_velocity_control failed: "
+                  << e.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[c_api] task_trajectory_csv_velocity_control failed with unknown exception\n";
+    }
+    return 0;
+}
+
 void doosan_controller_hold(void *handle)
 {
     try

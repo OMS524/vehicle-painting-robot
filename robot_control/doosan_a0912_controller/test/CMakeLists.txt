@@ -9,6 +9,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(API_DRFL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../API-DRFL")
 set(DOOSAN_DRCF_VERSION 2 CACHE STRING "Doosan DRCF major version. Use 2 for M2.x and 3 for M3.x.")
 
+find_package(Eigen3 REQUIRED)
+find_package(pinocchio REQUIRED)
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
   set(DRFL_ARCH "arm64")
 else()
@@ -39,6 +42,7 @@ add_library(doosan_controller
 
 target_compile_definitions(doosan_controller PUBLIC
   DRCF_VERSION=${DOOSAN_DRCF_VERSION}
+  DOOSAN_HAS_PINOCCHIO=1
 )
 
 target_include_directories(doosan_controller PUBLIC
@@ -50,6 +54,8 @@ target_link_libraries(doosan_controller PUBLIC
   "${DRFL_LIB_DIR}/libDRFL.a"
   "${DRFL_LIB_DIR}/libPocoFoundation.so"
   "${DRFL_LIB_DIR}/libPocoNet.so"
+  Eigen3::Eigen
+  pinocchio::pinocchio
   pthread
 )
 

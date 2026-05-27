@@ -13,7 +13,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CSV_PATH = (
     PROJECT_ROOT
-    / "painting_trajectory_planner/test/csv/car_door_small/painting_trajectory.csv"
+    / "/home/oms/vehicle-painting-robot/painting_trajectory_planner/test/csv/car_door_small/painting_trajectory.csv"
 )
 
 POSITION_COLUMN_CANDIDATES = (

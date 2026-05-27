@@ -68,7 +68,7 @@ painting_trajectory:
     # TCP 경로 방향 목표 속도 [m/s]
     desired_speed: 0.1
     # 로봇 제어 주기 [s]
-    control_dt: 0.001
+    control_dt: 0.01
     # TCP 경로 방향 최대 가속도 [m/s^2]
     max_acceleration: 0.5
 

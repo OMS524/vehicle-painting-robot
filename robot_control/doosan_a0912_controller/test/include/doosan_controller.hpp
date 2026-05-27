@@ -35,7 +35,7 @@ public:
         RobotSystem system = RobotSystem::Real;
         float rt_period_sec = 0.001f;
         int rt_loss_count = 4;
-        float command_time_sec = 0.015f;
+        float command_time_sec = 0.001f;
         float position_move_time_sec = 8.0f;
         JointArray rt_velocity_limit = {70.f, 70.f, 70.f, 70.f, 70.f, 70.f};
         JointArray rt_acceleration_limit = {70.f, 70.f, 70.f, 70.f, 70.f, 70.f};
@@ -86,6 +86,35 @@ public:
         float max_joint_velocity_deg_s = 250.0f,
         float max_joint_acceleration_deg_s2 = 1500.0f);
 
+    bool jointTrajectoryCsvPositionControl(
+        const std::string &csv_path,
+        float command_time_sec = 0.0f,
+        float max_joint_step_deg = 20.0f,
+        float max_joint_velocity_deg_s = 250.0f,
+        float max_joint_acceleration_deg_s2 = 1500.0f);
+
+    bool jointTrajectoryCsvVelocityControl(
+        const std::string &csv_path,
+        float command_time_sec = 0.0f,
+        float position_gain = 4.0f,
+        float max_joint_step_deg = 20.0f,
+        float max_joint_velocity_deg_s = 70.0f,
+        float max_joint_acceleration_deg_s2 = 500.0f,
+        float preposition_max_joint_velocity_deg_s = 20.0f,
+        float preposition_max_joint_acceleration_deg_s2 = 150.0f);
+
+    bool taskTrajectoryCsvVelocityControl(
+        const std::string &csv_path,
+        const std::string &urdf_path,
+        const std::string &tcp_frame = "link_6",
+        float command_time_sec = 0.0f,
+        float position_gain = 8.0f,
+        float orientation_gain = 4.0f,
+        float damping = 0.03f,
+        float max_joint_velocity_deg_s = 70.0f,
+        float max_joint_acceleration_deg_s2 = 500.0f,
+        float max_joint_step_deg = 20.0f);
+
     bool connect(const Config &config);
     bool servoOn(std::chrono::seconds timeout = std::chrono::seconds(15));
     bool servoOff();
@@ -113,6 +142,18 @@ public:
 
     static RobotSystem robotSystemFromString(const std::string &value);
 
+    struct TaskTrajectoryPoint
+    {
+        double time_sec = 0.0;
+        std::array<double, 3> position = {};
+        std::array<double, 9> rotation = {};
+        std::array<double, 3> linear_velocity = {};
+        std::array<double, 3> angular_velocity = {};
+        std::array<float, kNumJoints> doosan_task_pose = {};
+    };
+
+    struct CartesianVelocityContext;
+
 private:
     using Clock = std::chrono::steady_clock;
 
@@ -123,6 +164,8 @@ private:
         JointVelocity,
         JointVelocityTarget,
         JointTrajectory,
+        JointVelocityTrajectory,
+        TaskVelocityTrajectory,
     };
 
     struct JointTrajectoryPoint
@@ -149,7 +192,13 @@ private:
         float velocity_gain = 1.0f;
         float velocity_tolerance_deg = 0.5f;
         float velocity_timeout_sec = 20.0f;
+        float position_gain = 8.0f;
+        float orientation_gain = 4.0f;
+        float damping = 0.03f;
+        float max_joint_velocity_deg_s = 70.0f;
+        float max_joint_acceleration_deg_s2 = 500.0f;
         JointArray velocity_target_command = {};
+        JointArray previous_velocity_command = {};
         JointArray velocity_profile_direction = {};
         JointArray velocity_profile_peak = {};
         JointArray velocity_profile_accel_time = {};
@@ -164,6 +213,8 @@ private:
         JointArray a5 = {};
         JointArray target_position = {};
         std::shared_ptr<const std::vector<JointTrajectoryPoint>> joint_trajectory;
+        std::shared_ptr<const std::vector<TaskTrajectoryPoint>> task_trajectory;
+        std::shared_ptr<CartesianVelocityContext> cartesian_velocity_context;
     };
 
     bool waitForControlAccessAndStandby(std::chrono::seconds timeout);
@@ -196,12 +247,41 @@ private:
     bool setJointTrajectoryPositionTarget(
         std::shared_ptr<const std::vector<JointTrajectoryPoint>> trajectory,
         float command_time_sec);
+    bool setJointTrajectoryVelocityTarget(
+        std::shared_ptr<const std::vector<JointTrajectoryPoint>> trajectory,
+        float command_time_sec,
+        float position_gain,
+        float max_joint_velocity_deg_s,
+        float max_joint_acceleration_deg_s2);
     bool loadTaskTrajectoryCsv(
         const std::string &csv_path,
         float max_joint_step_deg,
         float max_joint_velocity_deg_s,
         float max_joint_acceleration_deg_s2,
         std::vector<JointTrajectoryPoint> *trajectory);
+    bool loadJointTrajectoryCsv(
+        const std::string &csv_path,
+        float max_joint_step_deg,
+        float max_joint_velocity_deg_s,
+        float max_joint_acceleration_deg_s2,
+        std::vector<JointTrajectoryPoint> *trajectory);
+    bool loadCartesianTaskTrajectoryCsv(
+        const std::string &csv_path,
+        std::vector<TaskTrajectoryPoint> *trajectory);
+    bool setTaskVelocityTrajectoryTarget(
+        std::shared_ptr<const std::vector<TaskTrajectoryPoint>> trajectory,
+        std::shared_ptr<CartesianVelocityContext> context,
+        float command_time_sec,
+        float position_gain,
+        float orientation_gain,
+        float damping,
+        float max_joint_velocity_deg_s,
+        float max_joint_acceleration_deg_s2);
+    bool solveClosestIk(
+        const std::array<float, kNumJoints> &task_pose,
+        const JointArray &reference_joint,
+        JointArray *joint,
+        int *solution_space);
     void realtimeLoop();
 
     void handleAccessControl(MONITORING_ACCESS_CONTROL access);

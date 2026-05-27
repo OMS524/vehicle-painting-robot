@@ -22,7 +22,7 @@ CONTROL_MODE = "velocity"  # "position" or "velocity"
 
 TARGET_POSITION = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 POSITION_MOVE_TIME_SEC = 8.0
-POSITION_COMMAND_TIME_SEC = 0.015
+POSITION_COMMAND_TIME_SEC = 0.01
 POSITION_DONE_MARGIN_SEC = 2.0
 POSITION_SEQUENCE = [
     (TARGET_POSITION, POSITION_MOVE_TIME_SEC),
@@ -37,7 +37,7 @@ VELOCITY_ACCELERATION = [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
 VELOCITY_GAIN = 1.0
 VELOCITY_TOLERANCE_DEG = 0.5
 VELOCITY_TIMEOUT_SEC = 20.0
-VELOCITY_COMMAND_TIME_SEC = 0.015
+VELOCITY_COMMAND_TIME_SEC = 0.01
 VELOCITY_DONE_MARGIN_SEC = 2.0
 MOTION_DWELL_SEC = 1.0
 VELOCITY_SEQUENCE = [
@@ -121,6 +121,44 @@ class DoosanRobot:
             ctypes.c_float,
         ]
         self._lib.doosan_controller_task_trajectory_csv_position_control.restype = ctypes.c_int
+
+        self._lib.doosan_controller_joint_trajectory_csv_position_control.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+        ]
+        self._lib.doosan_controller_joint_trajectory_csv_position_control.restype = ctypes.c_int
+
+        self._lib.doosan_controller_joint_trajectory_csv_velocity_control.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+        ]
+        self._lib.doosan_controller_joint_trajectory_csv_velocity_control.restype = ctypes.c_int
+
+        self._lib.doosan_controller_task_trajectory_csv_velocity_control.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.c_float,
+        ]
+        self._lib.doosan_controller_task_trajectory_csv_velocity_control.restype = ctypes.c_int
 
         self._lib.doosan_controller_hold.argtypes = [ctypes.c_void_p]
         self._lib.doosan_controller_hold.restype = None
@@ -237,6 +275,94 @@ class DoosanRobot:
         )
         if not ok:
             raise RuntimeError("task trajectory CSV position control failed")
+
+    def joint_trajectory_csv_position_control(
+        self,
+        csv_path: str | Path,
+        command_time_sec: float = 0.001,
+        max_joint_step_deg: float = 20.0,
+        max_joint_velocity_deg_s: float = 250.0,
+        max_joint_acceleration_deg_s2: float = 1500.0,
+    ) -> None:
+        path = Path(csv_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+        ok = self._lib.doosan_controller_joint_trajectory_csv_position_control(
+            self._handle,
+            str(path).encode(),
+            ctypes.c_float(command_time_sec),
+            ctypes.c_float(max_joint_step_deg),
+            ctypes.c_float(max_joint_velocity_deg_s),
+            ctypes.c_float(max_joint_acceleration_deg_s2),
+        )
+        if not ok:
+            raise RuntimeError("joint trajectory CSV position control failed")
+
+    def joint_trajectory_csv_velocity_control(
+        self,
+        csv_path: str | Path,
+        command_time_sec: float = 0.001,
+        position_gain: float = 4.0,
+        max_joint_step_deg: float = 20.0,
+        max_joint_velocity_deg_s: float = 70.0,
+        max_joint_acceleration_deg_s2: float = 500.0,
+        preposition_max_joint_velocity_deg_s: float = 20.0,
+        preposition_max_joint_acceleration_deg_s2: float = 150.0,
+    ) -> None:
+        path = Path(csv_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+        ok = self._lib.doosan_controller_joint_trajectory_csv_velocity_control(
+            self._handle,
+            str(path).encode(),
+            ctypes.c_float(command_time_sec),
+            ctypes.c_float(position_gain),
+            ctypes.c_float(max_joint_step_deg),
+            ctypes.c_float(max_joint_velocity_deg_s),
+            ctypes.c_float(max_joint_acceleration_deg_s2),
+            ctypes.c_float(preposition_max_joint_velocity_deg_s),
+            ctypes.c_float(preposition_max_joint_acceleration_deg_s2),
+        )
+        if not ok:
+            raise RuntimeError("joint trajectory CSV velocity control failed")
+
+    def task_trajectory_csv_velocity_control(
+        self,
+        csv_path: str | Path,
+        urdf_path: str | Path,
+        tcp_frame: str = "link_6",
+        command_time_sec: float = 0.001,
+        position_gain: float = 8.0,
+        orientation_gain: float = 4.0,
+        damping: float = 0.03,
+        max_joint_velocity_deg_s: float = 70.0,
+        max_joint_acceleration_deg_s2: float = 500.0,
+        max_joint_step_deg: float = 20.0,
+    ) -> None:
+        csv = Path(csv_path).expanduser().resolve()
+        urdf = Path(urdf_path).expanduser().resolve()
+        if not csv.is_file():
+            raise FileNotFoundError(csv)
+        if not urdf.is_file():
+            raise FileNotFoundError(urdf)
+
+        ok = self._lib.doosan_controller_task_trajectory_csv_velocity_control(
+            self._handle,
+            str(csv).encode(),
+            str(urdf).encode(),
+            tcp_frame.encode(),
+            ctypes.c_float(command_time_sec),
+            ctypes.c_float(position_gain),
+            ctypes.c_float(orientation_gain),
+            ctypes.c_float(damping),
+            ctypes.c_float(max_joint_velocity_deg_s),
+            ctypes.c_float(max_joint_acceleration_deg_s2),
+            ctypes.c_float(max_joint_step_deg),
+        )
+        if not ok:
+            raise RuntimeError("task trajectory CSV velocity control failed")
 
     def hold(self) -> None:
         self._lib.doosan_controller_hold(self._handle)

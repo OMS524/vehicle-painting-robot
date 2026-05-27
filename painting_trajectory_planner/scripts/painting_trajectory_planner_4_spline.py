@@ -678,6 +678,49 @@ def _sample_extended_spline_row_uniform(
     }
 
 
+def _reverse_sampled_row_for_zigzag(sampled):
+    total_length = float(np.asarray(sampled["arc_lengths"], float).reshape(-1)[-1])
+    reversed_sampled = dict(sampled)
+
+    reversed_sampled["points"] = np.asarray(sampled["points"], float)[::-1].copy()
+    reversed_sampled["core_points"] = reversed_sampled["points"][
+        np.asarray(sampled["base_paint_mask"], dtype=bool)[::-1]
+    ].copy()
+    reversed_sampled["directions"] = np.asarray(sampled["directions"], float)[::-1].copy()
+    reversed_sampled["tangents"] = -np.asarray(sampled["tangents"], float)[::-1].copy()
+    reversed_sampled["orientations"] = np.asarray(sampled["orientations"], float)[::-1].copy()
+    reversed_sampled["arc_lengths"] = (
+        total_length - np.asarray(sampled["arc_lengths"], float).reshape(-1)[::-1]
+    )
+    reversed_sampled["path_speeds"] = (
+        np.asarray(sampled["path_speeds"], float).reshape(-1)[::-1].copy()
+    )
+    reversed_sampled["path_accelerations"] = (
+        -np.asarray(sampled["path_accelerations"], float).reshape(-1)[::-1].copy()
+    )
+    reversed_sampled["linear_velocities"] = (
+        -np.asarray(sampled["linear_velocities"], float)[::-1].copy()
+    )
+    reversed_sampled["angular_velocities"] = (
+        -np.asarray(sampled["angular_velocities"], float)[::-1].copy()
+    )
+    reversed_sampled["anchor_mask"] = np.asarray(sampled["anchor_mask"], dtype=bool)[
+        ::-1
+    ].copy()
+    reversed_sampled["base_paint_mask"] = np.asarray(
+        sampled["base_paint_mask"], dtype=bool
+    )[::-1].copy()
+    reversed_sampled["extension_rows"] = [
+        np.asarray(row, float)[::-1].copy()
+        for row in reversed(list(sampled["extension_rows"]))
+    ]
+    reversed_sampled["extension_points"] = [
+        np.asarray(point, float).copy()
+        for point in reversed(list(sampled["extension_points"]))
+    ]
+    return reversed_sampled
+
+
 def _false_run_length(points, start, end):
     pts = np.asarray(points, float)
     if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
@@ -887,9 +930,7 @@ def generate_paint_spline_rows(
             anchor_dirs = np.repeat(default_direction.reshape(1, 3), len(anchor_points), axis=0)
 
         trajectory_row_index = len(full_rows)
-        if bool(raster_zigzag) and trajectory_row_index % 2 == 1:
-            anchor_points = anchor_points[::-1]
-            anchor_dirs = anchor_dirs[::-1]
+        row_should_zigzag = bool(raster_zigzag) and trajectory_row_index % 2 == 1
 
         sampled = _sample_extended_spline_row_uniform(
             anchor_points,
@@ -902,6 +943,8 @@ def generate_paint_spline_rows(
         )
         if sampled is None:
             continue
+        if row_should_zigzag:
+            sampled = _reverse_sampled_row_for_zigzag(sampled)
 
         full_times = np.asarray(sampled["times"], float).reshape(-1)
         full_row = sampled["points"]
