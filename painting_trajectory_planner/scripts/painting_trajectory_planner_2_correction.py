@@ -566,7 +566,10 @@ def _component_left_top_order_key(path_uw):
     )
 
 
-def _merge_component_paths_by_left_top_order(component_paths):
+def _merge_component_paths_by_left_top_order(
+    component_paths,
+    backtrack_tolerance=0.0,
+):
     paths = [
         np.asarray(path, float).copy()
         for path in component_paths
@@ -585,6 +588,9 @@ def _merge_component_paths_by_left_top_order(component_paths):
         last_dist = float(np.linalg.norm(path[-1] - current_end))
         next_endpoint_idx = 0 if first_dist <= last_dist else -1
         next_path = _orient_path_from_endpoint(path, next_endpoint_idx)
+        backtrack = float(current_end[0] - next_path[0, 0])
+        if backtrack > max(float(backtrack_tolerance), 0.0):
+            continue
         merged = np.vstack([merged, next_path])
 
     return merged
@@ -596,6 +602,7 @@ def _extract_surface_polyline_info(
     endpoint_quantize_step=0.00125,
     endpoint_graph_neighbor_count=6,
     endpoint_component_min_arc_length=0.00375,
+    endpoint_component_merge_backtrack_tolerance=0.0,
 ):
     pts = _quantize_unique_points_2d(
         points_uw,
@@ -647,7 +654,10 @@ def _extract_surface_polyline_info(
         ordered = pts[order]
         return {"path": ordered, "components": [ordered]}
 
-    merged = _merge_component_paths_by_left_top_order(component_paths)
+    merged = _merge_component_paths_by_left_top_order(
+        component_paths,
+        backtrack_tolerance=endpoint_component_merge_backtrack_tolerance,
+    )
 
     return {"path": merged, "components": component_paths}
 
@@ -782,6 +792,9 @@ def _correct_row_profile(
         endpoint_component_min_arc_length=float(
             correction_cfg.get("endpoint_component_min_arc_length", 0.00375)
         ),
+        endpoint_component_merge_backtrack_tolerance=float(
+            correction_cfg.get("endpoint_component_merge_backtrack_tolerance", 0.0)
+        ),
     )
     observed_path_uw = np.asarray(observed_info.get("path", []), float)
     observed_component_paths_uw = [
@@ -819,6 +832,7 @@ def _correct_row_profile(
     return {
         "row_grid": row_grid,
         "corrected_w": corrected,
+        "connected_component_path_uw": observed_path_uw.copy(),
         "selected_hull_chain_uw": chain_uw.copy(),
         "corrected_chain_uw": corrected_chain_uw.copy(),
         "supported_samples_uw": np.asarray(supported_samples_uw, float).copy(),
@@ -834,6 +848,7 @@ def correct_surface_spline_rows(
     endpoint_quantize_step=0.00125,
     endpoint_graph_neighbor_count=6,
     endpoint_component_min_arc_length=0.00375,
+    endpoint_component_merge_backtrack_tolerance=0.0,
     support_tangent_half_width=0.0025,
     support_anchor_max_distance=0.0025,
     transition_count=3,
@@ -872,12 +887,16 @@ def correct_surface_spline_rows(
     selected_hull_rows_world = []
     supported_sample_rows_world = []
     observed_path_rows_world = []
+    connected_component_rows_world = []
 
     correction_kwargs = {
         "row_point_spacing": float(row_point_spacing),
         "endpoint_quantize_step": float(endpoint_quantize_step),
         "endpoint_graph_neighbor_count": int(endpoint_graph_neighbor_count),
         "endpoint_component_min_arc_length": float(endpoint_component_min_arc_length),
+        "endpoint_component_merge_backtrack_tolerance": float(
+            endpoint_component_merge_backtrack_tolerance
+        ),
         "support_tangent_half_width": float(support_tangent_half_width),
         "support_anchor_max_distance": float(support_anchor_max_distance),
         "transition_count": int(transition_count),
@@ -946,6 +965,21 @@ def correct_surface_spline_rows(
             endpoint_xyz[:, 2] = endpoint_uw[:, 1]
             endpoint_points_world.append(endpoint_xyz)
 
+        connected_component_uw = np.asarray(
+            corrected_row.get("connected_component_path_uw", []),
+            float,
+        )
+        if (
+            connected_component_uw.ndim == 2
+            and connected_component_uw.shape[1] == 2
+            and len(connected_component_uw) >= 2
+        ):
+            connected_xyz = np.zeros((len(connected_component_uw), 3), dtype=float)
+            connected_xyz[:, row_axis_idx] = connected_component_uw[:, 0]
+            connected_xyz[:, slice_axis_idx] = float(slice_position)
+            connected_xyz[:, 2] = connected_component_uw[:, 1]
+            connected_component_rows_world.append(connected_xyz)
+
         observed_component_paths_uw = corrected_row.get("observed_component_paths_uw", [])
         if observed_component_paths_uw:
             for observed_component_uw in observed_component_paths_uw:
@@ -997,6 +1031,9 @@ def correct_surface_spline_rows(
     ]
     result["correction_observed_path_rows_world"] = [
         work_to_world(row) for row in observed_path_rows_world
+    ]
+    result["correction_connected_component_rows_world"] = [
+        work_to_world(row) for row in connected_component_rows_world
     ]
 
     result["corrected_rows"] = corrected_rows

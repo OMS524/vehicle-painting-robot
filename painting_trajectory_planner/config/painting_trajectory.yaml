@@ -17,6 +17,8 @@ painting_trajectory:
       graph_neighbor_count: 10
       # 이 arc 길이보다 짧은 component는 노이즈로 보고 버림 [m]
       component_min_arc_length: 0.003
+      # component 병합 시 다음 component 시작점이 현재 끝점보다 이 거리 이상 왼쪽이면 병합 중단 [m]
+      component_merge_backtrack_tolerance: 0.1
 
     support:
       # 보정 전에 선택된 upper hull를 다시 샘플링하는 간격 [m]

@@ -41,6 +41,7 @@ class CorrectionEndpointConfig:
     quantize_step: float
     graph_neighbor_count: int
     component_min_arc_length: float
+    component_merge_backtrack_tolerance: float
 
     @classmethod
     def from_dict(cls, data=None):
@@ -107,6 +108,9 @@ class CorrectionConfig:
             "endpoint_quantize_step": endpoint.quantize_step,
             "endpoint_graph_neighbor_count": endpoint.graph_neighbor_count,
             "endpoint_component_min_arc_length": endpoint.component_min_arc_length,
+            "endpoint_component_merge_backtrack_tolerance": (
+                endpoint.component_merge_backtrack_tolerance
+            ),
             "support_tangent_half_width": support.tangent_half_width,
             "support_anchor_max_distance": support.anchor_max_distance,
             "transition_count": support.transition_count,
