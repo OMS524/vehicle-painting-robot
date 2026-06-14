@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import json
 import math
 import tempfile
 import webbrowser
@@ -16,14 +17,37 @@ import plotly.graph_objects as go
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "painting_trajectory_planner/test/data"
 CSV_DIR = REPO_ROOT / "painting_trajectory_planner/test/csv"
+REFERENCE_DIR = REPO_ROOT / "painting_trajectory_planner/test/data/reference_path_requirements"
+
 DEFAULT_INPUT_PATHS = (
-    DATA_DIR / "ES300h_front_bumper.ply",
-    DATA_DIR / "ES300h_hood.ply",
-    DATA_DIR / "ES300h_left_fender.ply",
-    DATA_DIR / "ES300h_trunk.ply",
-    DATA_DIR / "NX350h_right_fender.ply",
-    DATA_DIR / "Tesla_Model_Y_front_bumper.ply",
-    # CSV_DIR / "Tesla_Model_Y_front_bumper/painting_trajectory.csv",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_default" / "model-final-new.ply",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_default" / "right_rear_door_1_WaterBasedFullWetBaseCoat.10",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_default" / "right_rear_door_1_WaterBasedFullWetClearCoat.12",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_default" / "right_rear_door_1_WaterBasedSemiWetClearCoat.13",
+
+    # REFERENCE_DIR / "right_rear_door" / "metallic_wet" / "model-final-new.ply",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_wet" / "right_rear_door_1_WaterBasedFullWetBaseCoat.10",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_wet" / "right_rear_door_1_WaterBasedFullWetClearCoat.12",
+    # REFERENCE_DIR / "right_rear_door" / "metallic_wet" / "right_rear_door_1_WaterBasedSemiWetClearCoat.13",
+
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_default" / "model-final-new.ply",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_default" / "right_rear_door_1_WaterBasedFullWetBaseCoat.10",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_default" / "right_rear_door_1_WaterBasedFullWetClearCoat.12",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_default" / "right_rear_door_1_WaterBasedSemiWetClearCoat.13",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_default" / "right_rear_door_1_WaterBasedMistBaseCoat.14",
+
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_wet" / "model-final-new.ply",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_wet" / "right_rear_door_1_WaterBasedFullWetBaseCoat.10",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_wet" / "right_rear_door_1_WaterBasedFullWetClearCoat.12",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_wet" / "right_rear_door_1_WaterBasedSemiWetClearCoat.13",
+    # REFERENCE_DIR / "right_rear_door" / "solid_pearl_wet" / "right_rear_door_1_WaterBasedMistBaseCoat.14",
+
+
+
+    REFERENCE_DIR / "trunk" / "ES300h rear hood.ply",
+    REFERENCE_DIR / "trunk" / "rear_hood_1_WaterBasedFullWetBaseCoat.10",
+    REFERENCE_DIR / "trunk" / "rear_hood_1_WaterBasedFullWetClearCoat.12",
+    REFERENCE_DIR / "trunk" / "rear_hood_1_WaterBasedMistBaseCoat.14",
 )
 
 FILE_COLOR_PALETTE = (
@@ -46,6 +70,8 @@ RGB_COLUMN_CANDIDATES = (
     ("r", "g", "b"),
     ("red", "green", "blue"),
 )
+
+JSON_SUFFIXES = (".json", ".10", ".12", ".13", ".14")
 
 
 @dataclass(slots=True)
@@ -234,13 +260,104 @@ def load_ply_data(ply_path: Path) -> LoadedData:
     )
 
 
+def _read_json_file(json_path: Path):
+    try:
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        return json.loads(json_path.read_text(encoding="cp949"))
+
+
+def _json_point_color(point: dict) -> str:
+    is_swift = point.get("is_swift")
+    try:
+        is_swift_enabled = bool(int(is_swift))
+    except (TypeError, ValueError):
+        is_swift_enabled = bool(is_swift)
+    if is_swift_enabled:
+        return "rgb(255, 0, 255)"
+
+    trigger = str(point.get("gun_trigger", "")).strip().lower()
+    if trigger == "open":
+        return "rgb(0, 255, 0)"
+    if trigger == "close":
+        return "rgb(255, 80, 40)"
+
+    speed = point.get("speed")
+    try:
+        if speed is not None and float(speed) > 0.0:
+            return "rgb(35, 180, 255)"
+    except (TypeError, ValueError):
+        pass
+    return "rgb(110, 116, 128)"
+
+
+def load_json_data(json_path: Path) -> LoadedData:
+    raw = _read_json_file(json_path)
+    if isinstance(raw, dict):
+        trace = raw.get("trace")
+    elif isinstance(raw, list):
+        trace = raw
+    else:
+        trace = None
+
+    if not isinstance(trace, list):
+        raise ValueError("JSON에서 trace 배열을 찾지 못했습니다.")
+
+    points: list[list[float]] = []
+    colors: list[str] = []
+    row_ids: list[str] = []
+    skipped_rows = 0
+
+    for point in trace:
+        if not isinstance(point, dict):
+            skipped_rows += 1
+            continue
+
+        pos = point.get("pos")
+        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+            skipped_rows += 1
+            continue
+
+        xyz = []
+        for value in pos[:3]:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                number = math.nan
+            xyz.append(number)
+
+        if not all(math.isfinite(value) for value in xyz):
+            skipped_rows += 1
+            continue
+
+        points.append(xyz)
+        row_ids.append(str(point.get("row_ind", 0)))
+        colors.append(_json_point_color(point))
+
+    if not points:
+        raise ValueError("JSON에서 시각화할 수 있는 pos 좌표가 없습니다.")
+
+    return LoadedData(
+        path=json_path,
+        file_type="json",
+        points=np.asarray(points, dtype=np.float64),
+        colors=colors,
+        skipped_rows=skipped_rows,
+        row_ids=row_ids,
+    )
+
+
 def load_data(input_path: Path) -> LoadedData:
     suffix = input_path.suffix.lower()
     if suffix == ".csv":
         return load_csv_data(input_path)
     if suffix == ".ply":
         return load_ply_data(input_path)
-    raise ValueError(f"지원하지 않는 파일 형식입니다: {suffix}. CSV 또는 PLY만 지원합니다.")
+    if suffix in JSON_SUFFIXES:
+        return load_json_data(input_path)
+    raise ValueError(
+        f"지원하지 않는 파일 형식입니다: {suffix}. CSV, PLY, JSON(.json/.10/.12/.13/.14)만 지원합니다."
+    )
 
 
 def _voxel_downsample(data: LoadedData, voxel_size: float) -> LoadedData:
@@ -439,21 +556,21 @@ def _default_output_path(input_paths: list[Path]) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="CSV/PLY 포인트 클라우드를 Plotly HTML로 확인합니다."
+        description="CSV/PLY/JSON 포인트 데이터를 Plotly HTML로 확인합니다."
     )
     parser.add_argument(
         "input_paths",
         nargs="*",
         type=Path,
         help=(
-            "시각화할 CSV/PLY 파일 경로들. 생략하면 기본값 사용: "
+            "시각화할 CSV/PLY/JSON 파일 경로들. 생략하면 기본값 사용: "
             + ", ".join(str(path) for path in DEFAULT_INPUT_PATHS)
         ),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default="/home/oms/vehicle-painting-robot/painting_trajectory_planner/test/data/surface_data_debug.html",
+        default="/home/oms/vehicle-painting-robot/painting_trajectory_planner/test/data/data_debug.html",
         help="저장할 HTML 경로. 생략하면 /tmp에 저장합니다.",
     )
     parser.add_argument(
