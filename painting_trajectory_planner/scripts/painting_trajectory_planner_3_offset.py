@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 def _safe_normalize(v):
@@ -168,6 +169,34 @@ def _offset_vectors_from_work_row(
     return offset_vectors
 
 
+def _nearest_normals_for_sampled_points(
+    sampled_points_work,
+    source_points_work,
+    source_normals_work,
+):
+    sampled = np.asarray(sampled_points_work, float)
+    source_points = np.asarray(source_points_work, float)
+    source_normals = np.asarray(source_normals_work, float)
+    if (
+        sampled.ndim != 2
+        or sampled.shape[1] != 3
+        or source_points.ndim != 2
+        or source_points.shape[1] != 3
+        or source_normals.shape != source_points.shape
+        or len(sampled) == 0
+        or len(source_points) == 0
+    ):
+        return np.empty((0, 3), float)
+
+    tree = cKDTree(source_points)
+    _, indices = tree.query(sampled, k=1)
+    normals = source_normals[np.asarray(indices, dtype=int)]
+    normals = _safe_normalize_rows(normals)
+    flip = normals[:, 2] < 0.0
+    normals[flip] *= -1.0
+    return normals
+
+
 def generate_offset_rows(
     correction_result,
     offset_point_spacing=0.02,
@@ -207,10 +236,17 @@ def generate_offset_rows(
         if sampled_pts_work is None or len(sampled_pts_work) < 2:
             continue
 
-        offset_vecs_work = _offset_vectors_from_work_row(
+        profile_normals_work = np.asarray(profile.get("path_normals_work", []), float)
+        offset_vecs_work = _nearest_normals_for_sampled_points(
             sampled_pts_work,
-            row_axis_idx=row_axis_idx,
+            source_points_work=pts_work,
+            source_normals_work=profile_normals_work,
         )
+        if offset_vecs_work.shape != sampled_pts_work.shape:
+            offset_vecs_work = _offset_vectors_from_work_row(
+                sampled_pts_work,
+                row_axis_idx=row_axis_idx,
+            )
 
         sampled_pts_world = work_to_world(sampled_pts_work)
         offset_vecs_world = _safe_normalize_rows(dir_to_world(offset_vecs_work))

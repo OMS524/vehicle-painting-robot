@@ -1,5 +1,9 @@
 painting_trajectory:
   surface_extraction:
+    # 슬라이싱 방식: axis / geodesic
+    # axis: 기존 작업 좌표계 축 기준 슬라이싱
+    # geodesic: surface graph 거리장 기반 level-set band 슬라이싱
+    slicing_method: geodesic
     # 로컬 작업 좌표계에서 슬라이스를 시작할 방향: top / bottom / left / right
     spline_start_side: top
     # 선택한 시작 방향에서 첫 슬라이스를 배치하기 전 안쪽으로 들어가는 거리 [m]
@@ -8,6 +12,18 @@ painting_trajectory:
     spline_spacing: 0.05
     # 각 슬라이스 band에서 raw 점군을 모을 때 쓰는 반두께 [m]
     spline_half_width: 0.005
+    # geodesic 모드에서 surface graph 구성 시 각 점의 최근접 이웃 개수
+    geodesic_neighbor_count: 12
+    # geodesic 모드에서 PCA 표면 법선 추정 시 각 점의 최근접 이웃 개수
+    geodesic_normal_neighbor_count: 20
+    # geodesic graph edge 길이 제한. median kNN 거리 * factor, 0 이하면 제한 없음
+    geodesic_edge_max_factor: 4.0
+    # geodesic 시작 경계 seed band 폭 [m]. 0 이하면 spline_half_width 사용
+    geodesic_seed_width: 0.0
+    # geodesic level-set band 반폭 [m]. 0 이하면 spline_half_width 사용
+    geodesic_band_half_width: 0.0
+    # geodesic band로 인정할 최소 점 개수
+    geodesic_min_band_points: 8
 
   correction:
     endpoint:
@@ -48,7 +64,7 @@ painting_trajectory:
     # offset 생성 전 corrected row를 다시 샘플링하는 간격 [m]
     offset_point_spacing: 0.025
     # corrected surface path에서 법선 방향으로 떨어질 offset 거리 [m]
-    offset_distance: 0.2
+    offset_distance: 0.15
 
   spline:
     # spline arc-length table 생성을 위한 내부 샘플링 해상도 [m]

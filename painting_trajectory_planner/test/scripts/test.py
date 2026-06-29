@@ -71,13 +71,13 @@ CASES = [
     #     "paint_dir": [0.0, -1.0, 0.0],
     #     "scan_dir": [-1.0, 0.0, 0.0],
     # },
-    # {
-    #     "name": "ES300h_trunk",
-    #     "input_csv": DATA_DIR / "ES300h_trunk.ply",
-    #     "output_dir": CSV_DIR / "ES300h_trunk",
-    #     "paint_dir": [0.0, 0.0, -1.0],
-    #     "scan_dir": [0.0, 1.0, 0.0],
-    # },
+    {
+        "name": "ES300h_trunk",
+        "input_csv": DATA_DIR / "ES300h_trunk.ply",
+        "output_dir": CSV_DIR / "ES300h_trunk",
+        "paint_dir": [0.0, 0.0, -1.0],
+        "scan_dir": [0.0, 1.0, 0.0],
+    },
     # {
     #     "name": "NX350h_right_fender",
     #     "input_csv": DATA_DIR / "NX350h_right_fender.ply",
@@ -94,41 +94,41 @@ CASES = [
     # },
 
 
-    {
-        "name": "front_hood",
-        "input_csv": DATA_DIR / "reference_path_requirements" / "front_hood" / "solid_pearl_default" / "model-final-new.ply",
-        "output_dir": DATA_DIR / "reference_path_requirements" / "front_hood" / "solid_pearl_default" / "test",
-        "paint_dir": [0.0, 0.0, -1.0],
-        "scan_dir": [0.0, 1.0, 0.0],
-    },
-    {
-        "name": "right_front_door",
-        "input_csv": DATA_DIR / "reference_path_requirements" / "right_front_door" / "solid_pearl_default" / "model-final-new.ply",
-        "output_dir": DATA_DIR / "reference_path_requirements" / "right_front_door" / "solid_pearl_default" / "test",
-        "paint_dir": [0.0, 1.0, 0.0],
-        "scan_dir": [1.0, 0.0, 0.0],
-    },
-    {
-        "name": "right_front_fender",
-        "input_csv": DATA_DIR / "reference_path_requirements" / "right_front_fender" / "solid_pearl_default" / "model-final-new.ply",
-        "output_dir": DATA_DIR / "reference_path_requirements" / "right_front_fender" / "solid_pearl_default" / "test",
-        "paint_dir": [0.0, 1.0, 0.0],
-        "scan_dir": [1.0, 0.0, 0.0],
-    },
-    {
-        "name": "right_rear_door",
-        "input_csv": DATA_DIR / "reference_path_requirements" / "right_rear_door" / "solid_pearl_default" / "model-final-new.ply",
-        "output_dir": DATA_DIR / "reference_path_requirements" / "right_rear_door" / "solid_pearl_default" / "test",
-        "paint_dir": [0.0, -1.0, 0.0],
-        "scan_dir": [-1.0, 0.0, 0.0],
-    },
-    {
-        "name": "trunk",
-        "input_csv": DATA_DIR / "reference_path_requirements" / "trunk" / "ES300h rear hood.ply",
-        "output_dir": DATA_DIR / "reference_path_requirements" / "trunk" / "test",
-        "paint_dir": [0.0, 0.0, -1.0],
-        "scan_dir": [0.0, 1.0, 0.0],
-    },
+    # {
+    #     "name": "front_hood",
+    #     "input_csv": DATA_DIR / "reference_path_requirements" / "front_hood" / "solid_pearl_default" / "model-final-new.ply",
+    #     "output_dir": DATA_DIR / "reference_path_requirements" / "front_hood" / "solid_pearl_default" / "test",
+    #     "paint_dir": [0.0, 0.0, -1.0],
+    #     "scan_dir": [0.0, 1.0, 0.0],
+    # },
+    # {
+    #     "name": "right_front_door",
+    #     "input_csv": DATA_DIR / "reference_path_requirements" / "right_front_door" / "solid_pearl_default" / "model-final-new.ply",
+    #     "output_dir": DATA_DIR / "reference_path_requirements" / "right_front_door" / "solid_pearl_default" / "test",
+    #     "paint_dir": [0.0, 1.0, 0.0],
+    #     "scan_dir": [1.0, 0.0, 0.0],
+    # },
+    # {
+    #     "name": "right_front_fender",
+    #     "input_csv": DATA_DIR / "reference_path_requirements" / "right_front_fender" / "solid_pearl_default" / "model-final-new.ply",
+    #     "output_dir": DATA_DIR / "reference_path_requirements" / "right_front_fender" / "solid_pearl_default" / "test",
+    #     "paint_dir": [0.0, 1.0, 0.0],
+    #     "scan_dir": [1.0, 0.0, 0.0],
+    # },
+    # {
+    #     "name": "right_rear_door",
+    #     "input_csv": DATA_DIR / "reference_path_requirements" / "right_rear_door" / "solid_pearl_default" / "model-final-new.ply",
+    #     "output_dir": DATA_DIR / "reference_path_requirements" / "right_rear_door" / "solid_pearl_default" / "test",
+    #     "paint_dir": [0.0, -1.0, 0.0],
+    #     "scan_dir": [-1.0, 0.0, 0.0],
+    # },
+    # {
+    #     "name": "trunk",
+    #     "input_csv": DATA_DIR / "reference_path_requirements" / "trunk" / "ES300h rear hood.ply",
+    #     "output_dir": DATA_DIR / "reference_path_requirements" / "trunk" / "test",
+    #     "paint_dir": [0.0, 0.0, -1.0],
+    #     "scan_dir": [0.0, 1.0, 0.0],
+    # },
 ]
 
 

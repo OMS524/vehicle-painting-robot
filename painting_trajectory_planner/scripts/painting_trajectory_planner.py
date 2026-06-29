@@ -27,6 +27,13 @@ class SurfaceExtractionConfig:
     spline_start_offset: float
     spline_spacing: float
     spline_half_width: float
+    slicing_method: str = "axis"
+    geodesic_neighbor_count: int = 12
+    geodesic_normal_neighbor_count: int = 20
+    geodesic_edge_max_factor: float = 4.0
+    geodesic_seed_width: float = 0.0
+    geodesic_band_half_width: float = 0.0
+    geodesic_min_band_points: int = 8
 
     @classmethod
     def from_dict(cls, data=None):

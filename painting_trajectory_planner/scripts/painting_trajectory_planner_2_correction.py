@@ -3,6 +3,7 @@
 import heapq
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 try:
     from scipy.linalg import solveh_banded
@@ -158,6 +159,251 @@ def _component_longest_path(points_uw, adjacency, component_ids):
 
     path_ids.reverse()
     return points_uw[np.asarray(path_ids, dtype=int)]
+
+
+def _quantize_unique_points_3d(points_xyz, normals_xyz=None, step=0.00125):
+    pts = np.asarray(points_xyz, float)
+    normals = None if normals_xyz is None else np.asarray(normals_xyz, float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        return np.empty((0, 3), float), np.empty((0, 3), float)
+
+    step = max(float(step), 1e-6)
+    origin = np.min(pts, axis=0)
+    keys = np.rint((pts - origin[None, :]) / step).astype(int)
+    _, unique_idx = np.unique(keys, axis=0, return_index=True)
+    unique_idx = np.sort(unique_idx)
+    unique_pts = pts[unique_idx]
+
+    if normals is None or normals.shape != pts.shape:
+        unique_normals = np.empty((0, 3), float)
+    else:
+        unique_normals = normals[unique_idx]
+    return unique_pts, unique_normals
+
+
+def _build_knn_adjacency_3d(points_xyz, neighbor_count):
+    pts = np.asarray(points_xyz, float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) < 2:
+        return [[] for _ in range(len(pts))]
+
+    neighbor_count = min(max(int(neighbor_count), 1), len(pts) - 1)
+    tree = cKDTree(pts)
+    distances, indices = tree.query(pts, k=neighbor_count + 1)
+    if distances.ndim == 1:
+        distances = distances.reshape(-1, 1)
+        indices = indices.reshape(-1, 1)
+
+    adjacency = [[] for _ in range(len(pts))]
+    used_edges = set()
+    for idx in range(len(pts)):
+        for dist, nei in zip(distances[idx, 1:], indices[idx, 1:]):
+            if not np.isfinite(dist):
+                continue
+            a = int(idx)
+            b = int(nei)
+            if a == b:
+                continue
+            key = (min(a, b), max(a, b))
+            if key in used_edges:
+                continue
+            used_edges.add(key)
+            weight = float(dist)
+            adjacency[a].append((b, weight))
+            adjacency[b].append((a, weight))
+    return adjacency
+
+
+def _component_longest_path_nd(points, adjacency, component_ids, seed_axis=0):
+    pts = np.asarray(points, float)
+    component = np.asarray(component_ids, dtype=int).reshape(-1)
+    if pts.ndim != 2 or len(component) < 2:
+        return np.empty((0, pts.shape[1] if pts.ndim == 2 else 0), float), np.empty(0, dtype=int)
+
+    comp_set = set(int(v) for v in component)
+    sub_adj = [
+        [(nei, w) for nei, w in edges if nei in comp_set] if idx in comp_set else []
+        for idx, edges in enumerate(adjacency)
+    ]
+
+    axis = int(np.clip(seed_axis, 0, pts.shape[1] - 1))
+    seed = int(component[int(np.argmin(pts[component, axis]))])
+    dist0, _ = _dijkstra_shortest_paths(sub_adj, seed)
+    finite0 = np.isfinite(dist0)
+    if not np.any(finite0):
+        order = np.argsort(pts[component, axis], kind="mergesort")
+        ids = component[order]
+        return pts[ids], ids
+
+    a = int(np.nanargmax(np.where(finite0, dist0, -np.inf)))
+    dist_a, prev = _dijkstra_shortest_paths(sub_adj, a)
+    finite_a = np.isfinite(dist_a)
+    if not np.any(finite_a):
+        order = np.argsort(pts[component, axis], kind="mergesort")
+        ids = component[order]
+        return pts[ids], ids
+
+    b = int(np.nanargmax(np.where(finite_a, dist_a, -np.inf)))
+    path_ids = [b]
+    cur = b
+    while cur != a and cur >= 0:
+        cur = int(prev[cur])
+        if cur < 0:
+            break
+        path_ids.append(cur)
+    if path_ids[-1] != a:
+        order = np.argsort(pts[component, axis], kind="mergesort")
+        ids = component[order]
+        return pts[ids], ids
+
+    path_ids.reverse()
+    ids = np.asarray(path_ids, dtype=int)
+    return pts[ids], ids
+
+
+def _polyline_arclength_3d(points_xyz):
+    pts = np.asarray(points_xyz, float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        return np.zeros(0, dtype=float)
+    if len(pts) == 1:
+        return np.zeros(1, dtype=float)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    return np.concatenate([[0.0], np.cumsum(seg)])
+
+
+def _resample_polyline_linear_3d(points_xyz, point_spacing):
+    pts = np.asarray(points_xyz, float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) < 2:
+        return pts.copy()
+
+    arc = _polyline_arclength_3d(pts)
+    if len(arc) < 2 or float(arc[-1]) <= 1e-12:
+        return pts[:1].copy()
+
+    targets = _sample_arclength_grid(float(arc[-1]), point_spacing)
+    sampled = np.zeros((len(targets), 3), dtype=float)
+    for dim in range(3):
+        sampled[:, dim] = np.interp(targets, arc, pts[:, dim])
+    sampled[0] = pts[0]
+    sampled[-1] = pts[-1]
+    return sampled
+
+
+def _nearest_normals_for_points(points_xyz, source_points_xyz, source_normals_xyz):
+    pts = np.asarray(points_xyz, float)
+    source_pts = np.asarray(source_points_xyz, float)
+    source_normals = np.asarray(source_normals_xyz, float)
+    if (
+        pts.ndim != 2
+        or pts.shape[1] != 3
+        or source_pts.ndim != 2
+        or source_pts.shape[1] != 3
+        or source_normals.shape != source_pts.shape
+        or len(source_pts) == 0
+    ):
+        return np.empty((0, 3), float)
+
+    tree = cKDTree(source_pts)
+    _, indices = tree.query(pts, k=1)
+    normals = source_normals[np.asarray(indices, dtype=int)]
+    norm = np.linalg.norm(normals, axis=1, keepdims=True)
+    norm = np.maximum(norm, 1e-12)
+    normals = normals / norm
+    flip = normals[:, 2] < 0.0
+    normals[flip] *= -1.0
+    return normals
+
+
+def _correct_geodesic_band_profile(
+    slice_points_work,
+    slice_normals_work,
+    row_axis_idx,
+    row_point_spacing,
+    correction_kwargs=None,
+):
+    pts = np.asarray(slice_points_work, float)
+    normals = np.asarray(slice_normals_work, float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) < 2:
+        return None
+    if normals.shape != pts.shape:
+        normals = np.empty((0, 3), float)
+
+    correction_cfg = dict(correction_kwargs or {})
+    unique_pts, unique_normals = _quantize_unique_points_3d(
+        pts,
+        normals_xyz=normals if len(normals) == len(pts) else None,
+        step=float(correction_cfg.get("endpoint_quantize_step", 0.00125)),
+    )
+    if len(unique_pts) < 2:
+        return None
+
+    adjacency = _build_knn_adjacency_3d(
+        unique_pts,
+        neighbor_count=int(correction_cfg.get("endpoint_graph_neighbor_count", 6)),
+    )
+    components = _graph_components(adjacency)
+    if not components:
+        return None
+
+    min_arc = max(float(correction_cfg.get("endpoint_component_min_arc_length", 0.00375)), 1e-4)
+    best_path = None
+    best_ids = None
+    best_length = -np.inf
+    for component in components:
+        path, ids = _component_longest_path_nd(
+            unique_pts,
+            adjacency,
+            component,
+            seed_axis=row_axis_idx,
+        )
+        if len(path) < 2:
+            continue
+        length = float(_polyline_arclength_3d(path)[-1])
+        if length < min_arc:
+            continue
+        if length > best_length:
+            best_length = length
+            best_path = path
+            best_ids = ids
+
+    if best_path is None or len(best_path) < 2:
+        return None
+
+    if best_path[0, row_axis_idx] > best_path[-1, row_axis_idx]:
+        best_path = best_path[::-1]
+        if best_ids is not None:
+            best_ids = best_ids[::-1]
+
+    corrected_path = _resample_polyline_linear_3d(
+        best_path,
+        point_spacing=row_point_spacing,
+    )
+    if len(corrected_path) < 2:
+        return None
+
+    if len(unique_normals) == len(unique_pts):
+        corrected_normals = _nearest_normals_for_points(
+            corrected_path,
+            unique_pts,
+            unique_normals,
+        )
+    else:
+        corrected_normals = np.empty((0, 3), float)
+
+    return {
+        "corrected_row_work": corrected_path,
+        "corrected_normals_work": corrected_normals,
+        "connected_component_path_work": best_path.copy(),
+        "observed_component_paths_work": [
+            _component_longest_path_nd(
+                unique_pts,
+                adjacency,
+                component,
+                seed_axis=row_axis_idx,
+            )[0]
+            for component in components
+        ],
+        "endpoint_points_work": np.vstack([best_path[0], best_path[-1]]),
+    }
 
 
 def _polyline_arclength_2d(points_uw):
@@ -842,6 +1088,103 @@ def _correct_row_profile(
     }
 
 
+def _correct_geodesic_surface_spline_rows(result, correction_kwargs):
+    r_work = np.asarray(result.get("work_frame_world"), float)
+    origin = np.asarray(result.get("work_origin_world"), float)
+    slice_profiles = result.get("slice_profiles", [])
+    spline_start_side = str(result.get("spline_start_side", "top"))
+
+    if r_work.shape != (3, 3) or origin.shape != (3,):
+        result["corrected_rows"] = []
+        result["corrected_row_profiles"] = []
+        return result
+
+    cfg = _spline_scan_config(spline_start_side)
+    row_axis_idx = int(cfg["row_axis"])
+    descending = bool(cfg["descending"])
+    row_point_spacing = float(correction_kwargs.get("row_point_spacing", 0.0025))
+    work_to_world = lambda x: np.asarray(x, float) @ r_work.T + origin
+
+    corrected_rows = []
+    corrected_profiles = []
+    endpoint_points_world = []
+    observed_path_rows_world = []
+    connected_component_rows_world = []
+
+    ordered_slice_profiles = sorted(
+        slice_profiles,
+        key=lambda p: float(p.get("slice_position", 0.0)),
+        reverse=descending,
+    )
+    for slice_profile in ordered_slice_profiles:
+        slice_position = float(slice_profile.get("slice_position", 0.0))
+        slice_points_work = np.asarray(slice_profile.get("slice_points_work", []), float)
+        slice_normals_work = np.asarray(slice_profile.get("slice_normals_work", []), float)
+        if slice_points_work.ndim != 2 or slice_points_work.shape[1] != 3 or len(slice_points_work) < 2:
+            continue
+
+        corrected_row = _correct_geodesic_band_profile(
+            slice_points_work=slice_points_work,
+            slice_normals_work=slice_normals_work,
+            row_axis_idx=row_axis_idx,
+            row_point_spacing=row_point_spacing,
+            correction_kwargs=correction_kwargs,
+        )
+        if corrected_row is None:
+            continue
+
+        corrected_work = np.asarray(corrected_row["corrected_row_work"], float)
+        if corrected_work.ndim != 2 or corrected_work.shape[1] != 3 or len(corrected_work) < 2:
+            continue
+
+        corrected_rows.append(work_to_world(corrected_work))
+        profile = {
+            "slice_position": slice_position,
+            "path_points_work": corrected_work,
+        }
+        corrected_normals = np.asarray(
+            corrected_row.get("corrected_normals_work", []),
+            float,
+        )
+        if corrected_normals.shape == corrected_work.shape:
+            profile["path_normals_work"] = corrected_normals
+        corrected_profiles.append(profile)
+
+        endpoint_points_work = np.asarray(
+            corrected_row.get("endpoint_points_work", []),
+            float,
+        )
+        if endpoint_points_work.ndim == 2 and endpoint_points_work.shape == (2, 3):
+            endpoint_points_world.append(work_to_world(endpoint_points_work))
+
+        connected_work = np.asarray(
+            corrected_row.get("connected_component_path_work", []),
+            float,
+        )
+        if connected_work.ndim == 2 and connected_work.shape[1] == 3 and len(connected_work) >= 2:
+            connected_component_rows_world.append(work_to_world(connected_work))
+
+        for observed_work in corrected_row.get("observed_component_paths_work", []):
+            observed_work = np.asarray(observed_work, float)
+            if observed_work.ndim != 2 or observed_work.shape[1] != 3 or len(observed_work) < 2:
+                continue
+            observed_path_rows_world.append(work_to_world(observed_work))
+
+    if endpoint_points_world:
+        result["correction_endpoint_points_world"] = np.vstack(endpoint_points_world)
+    else:
+        result["correction_endpoint_points_world"] = np.empty((0, 3), float)
+
+    result["correction_convex_hull_rows_world"] = []
+    result["correction_selected_hull_rows_world"] = []
+    result["correction_supported_sample_rows_world"] = []
+    result["correction_observed_path_rows_world"] = observed_path_rows_world
+    result["correction_connected_component_rows_world"] = connected_component_rows_world
+    result["corrected_rows"] = corrected_rows
+    result["corrected_row_profiles"] = corrected_profiles
+    return result
+
+
 def correct_surface_spline_rows(
     extraction_result,
     row_point_spacing=0.0025,
@@ -907,6 +1250,9 @@ def correct_surface_spline_rows(
         "lambda_end": float(lambda_end),
         "regularizer": float(regularizer),
     }
+
+    if str(result.get("slicing_method", "axis")).strip().lower() == "geodesic":
+        return _correct_geodesic_surface_spline_rows(result, correction_kwargs)
 
     ordered_slice_profiles = sorted(
         slice_profiles,
