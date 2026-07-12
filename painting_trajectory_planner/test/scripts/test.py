@@ -21,10 +21,13 @@ from painting_trajectory_planner import generate_painting_trajectory_debug  # no
 
 
 SAVE_DEBUG_HTML = True
-OPEN_DEBUG_HTML = False
+OPEN_DEBUG_HTML = True
 DEBUG_HTML_NAME = "trajectory_debug.html"
 DEBUG_DIRECTION_MAX_SEGMENTS = 1000
 DEBUG_DIRECTION_LENGTH = 0.05
+DEBUG_SLICE_PLANE_STRIDE = 1
+DEBUG_SLICE_PLANE_OPACITY = 0.18
+DEBUG_SLICE_PLANE_VISIBLE = "legendonly"
 
 BUMPER_PAINT_DIR = [0.0, 0.0, -1.0]
 BUMPER_SCAN_DIR = [1.0, 0.0, 0.0]
@@ -271,6 +274,78 @@ def _add_line_trace(
     )
 
 
+def _add_slice_plane_mesh(
+    fig: go.Figure,
+    slice_profiles,
+    point_cloud_xyz: np.ndarray,
+    visible=True,
+) -> None:
+    profiles = list(slice_profiles or [])
+    cloud = _points_array(point_cloud_xyz)
+    if not profiles or len(cloud) == 0:
+        return
+
+    xs, ys, zs = [], [], []
+    tri_i, tri_j, tri_k = [], [], []
+    vertex_offset = 0
+
+    for profile in profiles[:: max(int(DEBUG_SLICE_PLANE_STRIDE), 1)]:
+        origin = np.asarray(profile.get("slice_plane_origin_world", []), dtype=float).reshape(-1)
+        row_axis = np.asarray(profile.get("slice_plane_row_axis_world", []), dtype=float).reshape(-1)
+        other_axis = np.asarray(profile.get("slice_plane_other_axis_world", []), dtype=float).reshape(-1)
+        if origin.size != 3 or row_axis.size != 3 or other_axis.size != 3:
+            continue
+
+        row_axis = row_axis / max(float(np.linalg.norm(row_axis)), 1e-12)
+        other_axis = other_axis / max(float(np.linalg.norm(other_axis)), 1e-12)
+        if not np.isfinite(origin).all() or not np.isfinite(row_axis).all() or not np.isfinite(other_axis).all():
+            continue
+
+        slice_points = _points_array(profile.get("slice_points_world", []))
+        row_source = slice_points if len(slice_points) >= 2 else cloud
+        row_values = row_source @ row_axis
+        other_values = cloud @ other_axis
+        row_half = max(0.5 * float(np.ptp(row_values)), 0.03)
+        other_half = max(0.55 * float(np.ptp(other_values)), 0.05)
+
+        corners = np.asarray(
+            [
+                origin - row_half * row_axis - other_half * other_axis,
+                origin + row_half * row_axis - other_half * other_axis,
+                origin + row_half * row_axis + other_half * other_axis,
+                origin - row_half * row_axis + other_half * other_axis,
+            ],
+            dtype=float,
+        )
+        xs.extend(corners[:, 0].tolist())
+        ys.extend(corners[:, 1].tolist())
+        zs.extend(corners[:, 2].tolist())
+        tri_i.extend([vertex_offset, vertex_offset])
+        tri_j.extend([vertex_offset + 1, vertex_offset + 2])
+        tri_k.extend([vertex_offset + 2, vertex_offset + 3])
+        vertex_offset += 4
+
+    if not xs:
+        return
+
+    fig.add_trace(
+        go.Mesh3d(
+            x=xs,
+            y=ys,
+            z=zs,
+            i=tri_i,
+            j=tri_j,
+            k=tri_k,
+            name="local slicing planes",
+            color="rgb(255, 210, 40)",
+            opacity=DEBUG_SLICE_PLANE_OPACITY,
+            visible=visible,
+            showlegend=True,
+            hoverinfo="skip",
+        )
+    )
+
+
 def write_debug_plotly_html(case: dict, point_cloud_xyz: np.ndarray, result: dict) -> Path:
     fig = go.Figure()
 
@@ -287,16 +362,111 @@ def write_debug_plotly_html(case: dict, point_cloud_xyz: np.ndarray, result: dic
         profile.get("slice_points_world", [])
         for profile in result.get("slice_profiles", [])
     ]
+    seed_points = []
+    end_points = []
+    guide_curve_rows = []
+    guide_hull_rows = []
+    guide_strip_points = []
+    seen_seed = set()
+    seen_end = set()
+    seen_guide = set()
+    seen_guide_hull = set()
+    seen_guide_strip = set()
+    for profile in result.get("slice_profiles", []):
+        seed = _points_array(profile.get("geodesic_seed_points_world", []))
+        if len(seed) > 0:
+            key = tuple(np.round(seed.reshape(-1), 6).tolist())
+            if key not in seen_seed:
+                seen_seed.add(key)
+                seed_points.append(seed)
+
+        end = _points_array(profile.get("geodesic_end_points_world", []))
+        if len(end) > 0:
+            key = tuple(np.round(end.reshape(-1), 6).tolist())
+            if key not in seen_end:
+                seen_end.add(key)
+                end_points.append(end)
+
+        guide = _points_array(profile.get("guide_curve_points_world", []))
+        if len(guide) > 0:
+            key = tuple(np.round(guide.reshape(-1), 6).tolist())
+            if key not in seen_guide:
+                seen_guide.add(key)
+                guide_curve_rows.append(guide)
+
+        guide_hull = _points_array(profile.get("guide_hull_points_world", []))
+        if len(guide_hull) > 0:
+            key = tuple(np.round(guide_hull.reshape(-1), 6).tolist())
+            if key not in seen_guide_hull:
+                seen_guide_hull.add(key)
+                guide_hull_rows.append(guide_hull)
+
+        guide_strip = _points_array(profile.get("guide_strip_points_world", []))
+        if len(guide_strip) > 0:
+            key = tuple(np.round(guide_strip.reshape(-1), 6).tolist())
+            if key not in seen_guide_strip:
+                seen_guide_strip.add(key)
+                guide_strip_points.append(guide_strip)
+
+    _add_marker_trace(
+        fig,
+        name="surface marching start boundary",
+        points=np.vstack(seed_points) if seed_points else np.empty((0, 3)),
+        color="magenta",
+        size=3.0,
+        visible="legendonly",
+    )
+    _add_marker_trace(
+        fig,
+        name="surface marching end boundary",
+        points=np.vstack(end_points) if end_points else np.empty((0, 3)),
+        color="cyan",
+        size=3.0,
+        visible="legendonly",
+    )
+
     _add_marker_trace(
         fig,
         name="slice raw points",
         points=np.vstack([_points_array(row) for row in slice_points if len(_points_array(row)) > 0])
         if slice_points
         else np.empty((0, 3)),
-        color="rgba(130, 160, 255, 0.45)",
-        size=1.6,
-        opacity=0.45,
+        color="rgba(255, 70, 210, 0.95)",
+        size=2.1,
+        opacity=0.95,
+        visible=True,
+    )
+    _add_line_trace(
+        fig,
+        name="guide curve",
+        rows=guide_curve_rows,
+        color="rgb(255, 120, 0)",
+        width=6.0,
+        visible=True,
+    )
+    _add_line_trace(
+        fig,
+        name="guide upper hull",
+        rows=guide_hull_rows,
+        color="rgb(255, 230, 0)",
+        width=4.0,
         visible="legendonly",
+    )
+    _add_marker_trace(
+        fig,
+        name="guide strip points",
+        points=np.vstack(guide_strip_points) if guide_strip_points else np.empty((0, 3)),
+        color="rgba(255, 170, 0, 0.8)",
+        size=2.2,
+        opacity=0.8,
+        visible="legendonly",
+    )
+
+    _add_slice_plane_mesh(
+        fig,
+        result.get("slice_profiles", []),
+        point_cloud_xyz,
+        visible=DEBUG_SLICE_PLANE_VISIBLE,
     )
 
     _add_line_trace(
@@ -456,6 +626,8 @@ def write_debug_plotly_html(case: dict, point_cloud_xyz: np.ndarray, result: dic
 def generate_case(case: dict) -> dict:
     point_cloud_xyz = load_surface_points(case["input_csv"])
     case["output_dir"].mkdir(parents=True, exist_ok=True)
+    for stale_csv in case["output_dir"].glob("trajectory_*.csv"):
+        stale_csv.unlink()
 
     result = generate_painting_trajectory_debug(
         point_cloud_xyz,

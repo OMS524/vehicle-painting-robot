@@ -2,7 +2,7 @@
 
 표면 포인트 클라우드를 입력받아 차량 부품 표면을 따라가는 도장 trajectory를 생성하는 알고리즘이다.
 
-현재 구현은 **axis slicing**과 **geodesic level-set slicing**을 선택할 수 있다. 생성된 surface row를 보정한 뒤 TCP offset, B-Spline, 사다리꼴 속도 프로파일을 거쳐 최종 trajectory CSV를 생성한다.
+현재 구현은 **axis slicing**과 **surface marching slicing**을 선택할 수 있다. 생성된 surface row를 보정한 뒤 TCP offset, B-Spline, 사다리꼴 속도 프로파일을 거쳐 최종 trajectory CSV를 생성한다.
 
 ## 목표
 
@@ -62,17 +62,18 @@ slice_points_work
 slice_points_world
 ```
 
-`surface_extraction.slicing_method: geodesic`로 설정하면 표면 graph 기반 slicing을 사용한다.
+`surface_extraction.slicing_method: surface_marching`로 설정하면 표면을 따라 전진하는 marching slicing을 사용한다. 기존 `geodesic` 값도 호환된다.
 
 1. point cloud를 작업 좌표계로 변환
 2. PCA 기반 local surface normal 추정
-3. point cloud kNN graph 구성
-4. `spline_start_side`에 해당하는 경계 band를 seed로 선택
-5. multi-source Dijkstra로 geodesic distance field 계산
-6. `spline_spacing` 간격의 distance level을 생성
-7. 각 level에서 `geodesic_band_half_width` 범위의 점들을 level-set band로 추출
+3. `spline_start_side` 기준 첫 slice band 생성
+4. 현재 band의 대표 row tangent 계산
+5. 각 band 점의 surface normal과 tangent로 local spacing direction 계산
+6. 현재 band에서 local spacing direction으로 `spline_spacing`만큼 떨어진 표면 점들을 다음 band로 선택
+7. 새 band의 normal/tangent를 다시 계산해 표면 꺾임에 맞춰 slice 방향을 갱신
+8. band 내부는 correction 단계에서 3D surface graph로 다시 정렬
 
-geodesic mode의 `slice_position`은 작업 좌표계 축 좌표가 아니라 seed boundary로부터의 geodesic distance이다.
+surface_marching mode의 `slice_position`은 row index이며, 실제 row 간격은 이전 row의 local surface frame을 따라 marching한 `spline_spacing`이다.
 
 ## 2. Correction
 
@@ -156,9 +157,9 @@ correction_supported_sample_rows_world
 correction_endpoint_points_world
 ```
 
-geodesic mode의 correction은 2D convex hull correction을 사용하지 않는다. 각 level-set band 안에서 3D surface graph를 다시 구성하고, 가장 긴 대표 component path를 선택한 뒤 arc-length 기준으로 재샘플링하여 `corrected_rows`를 만든다.
+surface_marching mode의 correction은 2D convex hull correction을 사용하지 않는다. 각 marched band 안에서 3D surface graph를 다시 구성하고, 가장 긴 대표 component path를 선택한 뒤 arc-length 기준으로 재샘플링하여 `corrected_rows`를 만든다.
 
-geodesic correction 출력은 다음을 포함한다.
+surface_marching correction 출력은 다음을 포함한다.
 
 ```text
 corrected_rows
@@ -186,7 +187,7 @@ offset_points_world
 offset_row_normals_world
 ```
 
-axis mode에서는 offset normal을 각 row의 2D 곡선 형태를 기준으로 계산한다. geodesic mode에서는 surface extraction에서 추정한 surface normal을 우선 사용하고, normal 데이터가 없으면 기존 2D tangent 기반 normal로 fallback한다.
+axis mode에서는 offset normal을 각 row의 2D 곡선 형태를 기준으로 계산한다. surface_marching mode에서는 surface extraction에서 추정한 surface normal을 우선 사용하고, normal 데이터가 없으면 기존 2D tangent 기반 normal로 fallback한다.
 
 ## 4. Spline Trajectory Generation
 
@@ -276,6 +277,7 @@ surface_extraction.geodesic_neighbor_count
 surface_extraction.geodesic_normal_neighbor_count
 surface_extraction.geodesic_edge_max_factor
 surface_extraction.geodesic_seed_width
+surface_extraction.geodesic_seed_bin_spacing
 surface_extraction.geodesic_band_half_width
 surface_extraction.geodesic_min_band_points
 correction.endpoint.graph_neighbor_count
@@ -296,11 +298,12 @@ trajectory.max_acceleration
 
 axis slicing은 door, hood, bumper처럼 곡률이 비교적 완만하거나 기준축 slicing이 표면 흐름과 잘 맞는 부품에서 안정적이다. 하지만 trunk처럼 곡률이 크고 표면 흐름이 축과 크게 어긋나는 부품에서는 row가 표면을 자연스럽게 따라가지 못할 수 있다.
 
-geodesic slicing은 이 문제를 줄이기 위해 추가된 surface graph 기반 방식이다. 다만 현재 geodesic mode는 v1 구현이며 다음 특성이 있다.
+surface_marching slicing은 이 문제를 줄이기 위해 추가된 표면 추종 방식이다. 현재 surface_marching mode는 v1 구현이며 다음 특성이 있다.
 
 ```text
-point cloud kNN graph 기반 근사 geodesic distance 사용
-level-set band 내부에서 가장 긴 대표 path 선택
+현재 row의 tangent와 local surface normal로 다음 row 방향 계산
+local spacing direction으로 `spline_spacing`만큼 전진
+marched band 내부에서 가장 긴 대표 path 선택
 band path는 arc-length resampling만 수행
 기존 B-Spline trajectory 생성 단계는 그대로 사용
 ```
@@ -309,7 +312,7 @@ band path는 arc-length resampling만 수행
 
 ```yaml
 surface_extraction:
-  slicing_method: axis   # axis | geodesic
+  slicing_method: axis   # axis | surface_marching
 ```
 
-이렇게 하면 기존 부품에서는 안정적인 축 기반 slicing을 유지하고, trunk 같은 부품에서만 geodesic slicing을 비교 적용할 수 있다.
+이렇게 하면 기존 부품에서는 안정적인 축 기반 slicing을 유지하고, trunk 같은 부품에서만 surface_marching slicing을 비교 적용할 수 있다.
