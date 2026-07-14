@@ -2,7 +2,6 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from painting_trajectory_planner_2_correction import (
-    _extract_surface_polyline_info as _extract_guide_polyline_info,
     _resample_polyline_linear_2d as _resample_guide_polyline_2d,
     _select_hull_chain_from_endpoints as _select_guide_hull_chain,
 )
@@ -226,7 +225,144 @@ def _surface_row_axis_from_guide(surface_normal, guide_tangent, row_axis_idx):
     return row_axis
 
 
-def _central_hull_guide_curve(
+def _select_longest_supported_strip(
+    points_work,
+    slice_axis_idx,
+    row_axis_idx,
+    strip_half_width,
+    slice_bin_width,
+    min_bin_points,
+):
+    pts = np.asarray(points_work, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) < 2:
+        return None
+
+    row_coords = pts[:, int(row_axis_idx)]
+    slice_coords = pts[:, int(slice_axis_idx)]
+    finite_mask = np.isfinite(row_coords) & np.isfinite(slice_coords)
+    if np.count_nonzero(finite_mask) < 2:
+        return None
+
+    row_width = max(float(strip_half_width) * 2.0, 1e-4)
+    slice_width = max(float(slice_bin_width), row_width, 1e-4)
+    row_min = float(np.min(row_coords[finite_mask]))
+    row_max = float(np.max(row_coords[finite_mask]))
+    slice_min = float(np.min(slice_coords[finite_mask]))
+    slice_max = float(np.max(slice_coords[finite_mask]))
+    row_bin_count = max(int(np.floor((row_max - row_min) / row_width)) + 1, 1)
+    slice_bin_count = max(int(np.floor((slice_max - slice_min) / slice_width)) + 1, 1)
+
+    row_ids = np.zeros(len(pts), dtype=int)
+    slice_ids = np.zeros(len(pts), dtype=int)
+    row_ids[finite_mask] = np.floor(
+        (row_coords[finite_mask] - row_min) / row_width
+    ).astype(int)
+    slice_ids[finite_mask] = np.floor(
+        (slice_coords[finite_mask] - slice_min) / slice_width
+    ).astype(int)
+    row_ids[finite_mask] = np.clip(row_ids[finite_mask], 0, row_bin_count - 1)
+    slice_ids[finite_mask] = np.clip(
+        slice_ids[finite_mask], 0, slice_bin_count - 1
+    )
+    occupancy_counts = np.zeros((row_bin_count, slice_bin_count), dtype=int)
+    np.add.at(occupancy_counts, (row_ids[finite_mask], slice_ids[finite_mask]), 1)
+
+    threshold = max(int(min_bin_points), 1)
+    occupied = occupancy_counts >= threshold
+    median_row = float(np.median(row_coords[finite_mask]))
+    best_score = None
+    selected = None
+    for row_bin in range(row_bin_count):
+        neighbor_lo = max(0, row_bin - 1)
+        neighbor_hi = min(row_bin_count, row_bin + 2)
+        neighbor_count = neighbor_hi - neighbor_lo
+        required_neighbors = min(2, neighbor_count)
+        stable_cells = (
+            np.count_nonzero(occupied[neighbor_lo:neighbor_hi], axis=0)
+            >= required_neighbors
+        )
+        supported_bins = np.flatnonzero(stable_cells)
+        if len(supported_bins) < 2:
+            continue
+
+        lower_bin = int(supported_bins[0])
+        upper_bin = int(supported_bins[-1])
+        span_bins = upper_bin - lower_bin
+        point_support = int(
+            np.sum(
+                occupancy_counts[
+                    neighbor_lo:neighbor_hi,
+                    lower_bin : upper_bin + 1,
+                ]
+            )
+        )
+        stable_cell_count = int(
+            np.count_nonzero(stable_cells[lower_bin : upper_bin + 1])
+        )
+        row_center = row_min + (float(row_bin) + 0.5) * row_width
+        score = (
+            span_bins,
+            point_support,
+            stable_cell_count,
+            -abs(row_center - median_row),
+        )
+        if best_score is None or score > best_score:
+            best_score = score
+            selected = {
+                "row_bin": int(row_bin),
+                "neighbor_lo": int(neighbor_lo),
+                "neighbor_hi": int(neighbor_hi),
+                "lower_bin": lower_bin,
+                "upper_bin": upper_bin,
+                "threshold": int(threshold),
+                "stable_cells": stable_cells,
+            }
+
+    if selected is None:
+        return None
+
+    neighbor_lo = selected["neighbor_lo"]
+    neighbor_hi = selected["neighbor_hi"]
+    lower_bin = selected["lower_bin"]
+    upper_bin = selected["upper_bin"]
+    threshold = selected["threshold"]
+    occupied = occupancy_counts >= threshold
+
+    lower_supported_rows = np.flatnonzero(occupied[neighbor_lo:neighbor_hi, lower_bin]) + neighbor_lo
+    upper_supported_rows = np.flatnonzero(occupied[neighbor_lo:neighbor_hi, upper_bin]) + neighbor_lo
+    lower_mask = np.isin(row_ids, lower_supported_rows) & (slice_ids == lower_bin) & finite_mask
+    upper_mask = np.isin(row_ids, upper_supported_rows) & (slice_ids == upper_bin) & finite_mask
+    if not np.any(lower_mask) or not np.any(upper_mask):
+        return None
+
+    supported_min = float(np.min(slice_coords[lower_mask]))
+    supported_max = float(np.max(slice_coords[upper_mask]))
+    strip_mask = (
+        finite_mask
+        & (row_ids >= neighbor_lo)
+        & (row_ids < neighbor_hi)
+        & (slice_coords >= supported_min)
+        & (slice_coords <= supported_max)
+    )
+    strip_indices = np.flatnonzero(strip_mask).astype(int)
+    if len(strip_indices) < 2:
+        return None
+
+    return {
+        "indices": strip_indices,
+        "center_value": float(np.median(row_coords[strip_indices])),
+        "supported_slice_min": supported_min,
+        "supported_slice_max": supported_max,
+        "row_bin": int(selected["row_bin"]),
+        "row_bin_width": float(row_width),
+        "slice_bin_width": float(slice_width),
+        "occupancy_threshold": int(threshold),
+        "occupancy_counts": occupancy_counts,
+        "stable_cells": np.asarray(selected["stable_cells"], dtype=bool),
+    }
+
+
+def _longest_strip_hull_guide_curve(
     points_work,
     normals_work,
     surface_tree,
@@ -235,6 +371,7 @@ def _central_hull_guide_curve(
     descending,
     strip_half_width,
     guide_spacing,
+    min_bin_points,
 ):
     pts = np.asarray(points_work, dtype=float)
     normals = np.asarray(normals_work, dtype=float)
@@ -243,55 +380,47 @@ def _central_hull_guide_curve(
     if normals.shape != pts.shape:
         normals = np.repeat(np.array([[0.0, 0.0, 1.0]], dtype=float), len(pts), axis=0)
 
-    row_coords = pts[:, int(row_axis_idx)]
-    center_value = float(np.median(row_coords))
     base_half_width = max(float(strip_half_width), 1e-6)
-
-    strip_indices = np.empty(0, dtype=int)
-    for scale in (1.0, 1.5, 2.0, 3.0, 4.0, 6.0):
-        candidates = np.flatnonzero(np.abs(row_coords - center_value) <= base_half_width * scale).astype(int)
-        if len(candidates) >= 20:
-            strip_indices = candidates
-            break
-        if len(candidates) > len(strip_indices):
-            strip_indices = candidates
-    if len(strip_indices) < 2:
+    strip_selection = _select_longest_supported_strip(
+        pts,
+        slice_axis_idx=slice_axis_idx,
+        row_axis_idx=row_axis_idx,
+        strip_half_width=base_half_width,
+        slice_bin_width=max(float(guide_spacing), base_half_width * 2.0),
+        min_bin_points=min_bin_points,
+    )
+    if strip_selection is None:
         return None
 
+    strip_indices = np.asarray(strip_selection["indices"], dtype=int)
     strip_points = pts[strip_indices]
-    strip_normals = normals[strip_indices]
+    center_value = float(strip_selection["center_value"])
     guide_2d_points = np.column_stack([
         strip_points[:, int(slice_axis_idx)],
         strip_points[:, 2],
     ])
 
-    observed = _extract_guide_polyline_info(
-        guide_2d_points,
-        row_point_spacing=max(float(guide_spacing) * 0.25, 0.0025),
-        endpoint_quantize_step=max(base_half_width * 0.25, 0.001),
-        endpoint_graph_neighbor_count=10,
-        endpoint_component_min_arc_length=max(float(guide_spacing) * 0.5, 0.003),
-        endpoint_component_merge_backtrack_tolerance=0.0,
-    )
-    observed_path = np.asarray(observed.get("path", []), dtype=float)
-    if observed_path.ndim != 2 or observed_path.shape[1] != 2 or len(observed_path) < 2:
-        return None
+    lower_slice = float(np.min(guide_2d_points[:, 0]))
+    upper_slice = float(np.max(guide_2d_points[:, 0]))
+    lower_candidates = guide_2d_points[np.isclose(guide_2d_points[:, 0], lower_slice)]
+    upper_candidates = guide_2d_points[np.isclose(guide_2d_points[:, 0], upper_slice)]
+    lower_endpoint = lower_candidates[int(np.argmax(lower_candidates[:, 1]))]
+    upper_endpoint = upper_candidates[int(np.argmax(upper_candidates[:, 1]))]
 
     hull_chain = _select_guide_hull_chain(
         guide_2d_points,
-        endpoint_a=observed_path[0],
-        endpoint_b=observed_path[-1],
+        endpoint_a=lower_endpoint,
+        endpoint_b=upper_endpoint,
     )
     if hull_chain is None or len(hull_chain) < 2:
-        hull_chain = observed_path
+        return None
     hull_chain = np.asarray(hull_chain, dtype=float)
 
     if bool(descending):
         if hull_chain[0, 0] < hull_chain[-1, 0]:
             hull_chain = hull_chain[::-1].copy()
-    else:
-        if hull_chain[0, 0] > hull_chain[-1, 0]:
-            hull_chain = hull_chain[::-1].copy()
+    elif hull_chain[0, 0] > hull_chain[-1, 0]:
+        hull_chain = hull_chain[::-1].copy()
 
     sampled_2d = _resample_guide_polyline_2d(hull_chain, point_spacing=max(float(guide_spacing), 1e-4))
     if sampled_2d is None or len(sampled_2d) < 2:
@@ -307,12 +436,11 @@ def _central_hull_guide_curve(
     query_points[:, int(slice_axis_idx)] = sampled_2d[:, 0]
     query_points[:, 2] = sampled_2d[:, 1]
 
-    strip_tree = cKDTree(strip_points)
-    _, local_indices = strip_tree.query(query_points, k=1)
-    local_indices = np.asarray(local_indices, dtype=int).reshape(-1)
-    guide_indices = strip_indices[local_indices]
+    guide_tree = surface_tree if surface_tree is not None else cKDTree(pts)
+    _, guide_indices = guide_tree.query(query_points, k=1)
+    guide_indices = np.asarray(guide_indices, dtype=int).reshape(-1)
     guide_points = query_points.copy()
-    guide_normals = strip_normals[local_indices].copy()
+    guide_normals = normals[guide_indices].copy()
 
     keep = np.concatenate([
         [True],
@@ -329,18 +457,18 @@ def _central_hull_guide_curve(
         reference=np.array([0.0, 0.0, 1.0], dtype=float),
     )
 
-    if surface_tree is not None:
-        _, global_indices = surface_tree.query(guide_points, k=1)
-        guide_indices = np.asarray(global_indices, dtype=int).reshape(-1)
-
     return {
         "points": guide_points,
         "indices": guide_indices.astype(int),
         "normals": guide_normals,
         "strip_points": strip_points,
-        "observed_path_2d": observed_path,
         "hull_chain_2d": hull_chain,
         "hull_chain_points": hull_chain_points,
+        "supported_slice_min": float(strip_selection["supported_slice_min"]),
+        "supported_slice_max": float(strip_selection["supported_slice_max"]),
+        "selected_strip_center": center_value,
+        "selected_strip_row_bin": int(strip_selection["row_bin"]),
+        "guide_occupancy_threshold": int(strip_selection["occupancy_threshold"]),
     }
 
 
@@ -498,6 +626,7 @@ def _generate_surface_marching_slice_profiles(
     geodesic_seed_width,
     geodesic_seed_bin_spacing,
     geodesic_band_half_width,
+    guide_extension_min_bin_points,
     geodesic_min_band_points,
 ):
     slice_axis_idx = int(slice_cfg["slice_axis"])
@@ -505,7 +634,6 @@ def _generate_surface_marching_slice_profiles(
     descending = bool(slice_cfg["descending"])
 
     normals_work = _estimate_surface_normals_work(pw, neighbor_count=geodesic_normal_neighbor_count)
-    adjacency = _build_knn_adjacency(pw, neighbor_count=geodesic_neighbor_count, edge_max_factor=geodesic_edge_max_factor)
     surface_tree = cKDTree(pw)
 
     band_half_width = float(geodesic_band_half_width)
@@ -524,7 +652,7 @@ def _generate_surface_marching_slice_profiles(
     seed_points_work = pw[seed_indices].copy() if len(seed_indices) else np.empty((0, 3), dtype=float)
     end_points_work = pw[end_indices].copy() if len(end_indices) else np.empty((0, 3), dtype=float)
 
-    guide = _central_hull_guide_curve(
+    guide = _longest_strip_hull_guide_curve(
         pw,
         normals_work,
         surface_tree=surface_tree,
@@ -533,6 +661,7 @@ def _generate_surface_marching_slice_profiles(
         descending=descending,
         strip_half_width=band_half_width,
         guide_spacing=spline_spacing,
+        min_bin_points=guide_extension_min_bin_points,
     )
     if guide is None:
         return []
@@ -570,8 +699,8 @@ def _generate_surface_marching_slice_profiles(
 
     min_band_points = max(int(geodesic_min_band_points), 2)
     profiles = []
-    for row_index, (origin_work, plane_normal_work, surface_normal_work, anchor_index) in enumerate(
-        zip(guide_points, guide_tangents, guide_normals, guide_indices)
+    for row_index, (origin_work, plane_normal_work, surface_normal_work) in enumerate(
+        zip(guide_points, guide_tangents, guide_normals)
     ):
         origin_work = np.asarray(origin_work, dtype=float)
         plane_normal_work = _safe_normalize(plane_normal_work)
@@ -599,16 +728,9 @@ def _generate_surface_marching_slice_profiles(
         for width_scale in (1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0):
             width = band_half_width * width_scale
             raw_indices = np.flatnonzero(np.abs(signed_distance) <= width).astype(int)
-            component = _connected_component_from_mask(
-                raw_indices,
-                adjacency=adjacency,
-                anchor_index=int(anchor_index),
-                points_work=pw,
-                anchor_point=origin_work,
-            )
-            if len(component) > len(best_indices):
-                best_indices = component
-            if len(component) >= min_band_points:
+            if len(raw_indices) > len(best_indices):
+                best_indices = raw_indices
+            if len(raw_indices) >= min_band_points:
                 break
         if len(best_indices) < min_band_points:
             continue
@@ -629,6 +751,18 @@ def _generate_surface_marching_slice_profiles(
             "guide_strip_points_world": work_to_world(np.asarray(guide.get("strip_points", []), dtype=float))
             if len(np.asarray(guide.get("strip_points", []), dtype=float))
             else np.empty((0, 3), dtype=float),
+            "guide_selected_strip_center_work": float(
+                guide.get("selected_strip_center", 0.0)
+            ),
+            "guide_supported_slice_min_work": float(
+                guide.get("supported_slice_min", 0.0)
+            ),
+            "guide_supported_slice_max_work": float(
+                guide.get("supported_slice_max", 0.0)
+            ),
+            "guide_occupancy_threshold": int(
+                guide.get("guide_occupancy_threshold", guide_extension_min_bin_points)
+            ),
         }
         profiles.append(
             _make_profile(
@@ -665,6 +799,7 @@ def generate_surface_spline_rows(
     geodesic_seed_width=0.0,
     geodesic_seed_bin_spacing=0.0,
     geodesic_band_half_width=0.0,
+    guide_extension_min_bin_points=8,
     geodesic_min_band_points=8,
 ):
     def _empty_result(points_used, r_work=None, origin=None, view_dir=None, surface_dir=None):
@@ -720,6 +855,7 @@ def generate_surface_spline_rows(
             geodesic_seed_width=geodesic_seed_width,
             geodesic_seed_bin_spacing=geodesic_seed_bin_spacing,
             geodesic_band_half_width=geodesic_band_half_width,
+            guide_extension_min_bin_points=guide_extension_min_bin_points,
             geodesic_min_band_points=geodesic_min_band_points,
         )
     else:

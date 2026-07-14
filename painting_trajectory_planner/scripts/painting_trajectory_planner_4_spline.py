@@ -804,8 +804,8 @@ def _filter_core_surface_hit_mask(
     return filtered
 
 
-def _nearest_slice_points_work(slice_profiles, slice_position):
-    best_points = np.empty((0, 3), float)
+def _nearest_slice_profile(slice_profiles, slice_position):
+    best_profile = None
     best_error = np.inf
     for profile in slice_profiles:
         points = np.asarray(profile.get("slice_points_work", []), float)
@@ -814,15 +814,35 @@ def _nearest_slice_points_work(slice_profiles, slice_position):
         error = abs(float(profile.get("slice_position", 0.0)) - float(slice_position))
         if error < best_error:
             best_error = error
-            best_points = points
-    return best_points
+            best_profile = profile
+    return best_profile
+
+
+def _slice_profile_for_offset_row(
+    slice_profiles,
+    offset_row_profile,
+    offset_row_index,
+    fallback_slice_position,
+):
+    source = dict(offset_row_profile or {})
+    if "row_index" in source:
+        source_row_index = int(source["row_index"])
+        for profile in slice_profiles:
+            if int(profile.get("row_index", -1)) == source_row_index:
+                return profile
+
+    if 0 <= int(offset_row_index) < len(slice_profiles):
+        profile = slice_profiles[int(offset_row_index)]
+        if str(profile.get("slicing_method", "axis")).strip().lower() != "axis":
+            return profile
+
+    return _nearest_slice_profile(slice_profiles, fallback_slice_position)
 
 
 def _paint_surface_hit_mask_2d(
     sample_points_world,
     directions_world,
-    slice_points_work,
-    row_axis_idx,
+    slice_profile,
     r_work,
     origin,
     check_distance,
@@ -830,7 +850,8 @@ def _paint_surface_hit_mask_2d(
 ):
     points_world = np.asarray(sample_points_world, float)
     dirs_world = np.asarray(directions_world, float)
-    observed_work = np.asarray(slice_points_work, float)
+    profile = dict(slice_profile or {})
+    observed_work = np.asarray(profile.get("slice_points_work", []), float)
     if (
         points_world.ndim != 2
         or points_world.shape[1] != 3
@@ -844,14 +865,56 @@ def _paint_surface_hit_mask_2d(
 
     sample_points_work = (points_world - origin.reshape(1, 3)) @ r_work
     directions_work = _safe_normalize_rows(dirs_world @ r_work)
-    sample_uw = sample_points_work[:, [row_axis_idx, 2]]
-    observed_uw = observed_work[:, [row_axis_idx, 2]]
+
+    plane_origin_work = np.asarray(
+        profile.get("slice_plane_origin_work", []),
+        dtype=float,
+    ).reshape(-1)
+    plane_row_axis_work = _safe_normalize(
+        profile.get("slice_plane_row_axis_work", [])
+    )
+    plane_other_axis_work = _safe_normalize(
+        profile.get("slice_plane_other_axis_work", [])
+    )
+    if (
+        plane_origin_work.size != 3
+        or float(np.linalg.norm(plane_row_axis_work)) <= 1e-9
+        or float(np.linalg.norm(plane_other_axis_work)) <= 1e-9
+    ):
+        return np.ones(len(points_world), dtype=bool)
+
+    plane_other_axis_work = plane_other_axis_work - float(
+        np.dot(plane_other_axis_work, plane_row_axis_work)
+    ) * plane_row_axis_work
+    plane_other_axis_work = _safe_normalize(plane_other_axis_work)
+    if float(np.linalg.norm(plane_other_axis_work)) <= 1e-9:
+        return np.ones(len(points_world), dtype=bool)
+
+    sample_relative_work = sample_points_work - plane_origin_work.reshape(1, 3)
+    observed_relative_work = observed_work - plane_origin_work.reshape(1, 3)
+    sample_uw = np.column_stack(
+        [
+            sample_relative_work @ plane_row_axis_work,
+            sample_relative_work @ plane_other_axis_work,
+        ]
+    )
+    observed_uw = np.column_stack(
+        [
+            observed_relative_work @ plane_row_axis_work,
+            observed_relative_work @ plane_other_axis_work,
+        ]
+    )
 
     axial_limit = max(float(check_distance), 0.0)
     lateral_limit = max(float(half_width), 0.0)
 
     hit_mask = np.zeros(len(sample_uw), dtype=bool)
-    direction_uw = directions_work[:, [row_axis_idx, 2]]
+    direction_uw = np.column_stack(
+        [
+            directions_work @ plane_row_axis_work,
+            directions_work @ plane_other_axis_work,
+        ]
+    )
     for idx, (sample, direction_work) in enumerate(zip(sample_uw, direction_uw)):
         axis = _safe_normalize_2d(direction_work)
         if float(np.linalg.norm(axis)) <= 1e-9:
@@ -887,6 +950,7 @@ def generate_paint_spline_rows(
 
     offset_rows = list(result.get("offset_rows", []))
     offset_normals = list(result.get("offset_row_normals_world", []))
+    offset_row_profiles = list(result.get("offset_row_profiles", []))
     slice_profiles = list(result.get("slice_profiles", []))
     default_direction = _safe_normalize(result.get("view_dir_world", [0.0, 0.0, -1.0]))
     r_work = np.asarray(result.get("work_frame_world", []), float)
@@ -970,16 +1034,26 @@ def generate_paint_spline_rows(
 
         raw_surface_hit_mask = np.ones(len(full_row), dtype=bool)
         row_slice_position = np.nan
+        source_slice_profile = None
         if r_work.shape == (3, 3) and origin.size == 3 and slice_profiles:
             full_row_work = (full_row - origin.reshape(1, 3)) @ r_work
             row_slice_position = float(np.median(full_row_work[:, slice_axis_idx]))
-            slice_points_work = _nearest_slice_points_work(slice_profiles, row_slice_position)
-            if len(slice_points_work) > 0:
+            offset_row_profile = (
+                offset_row_profiles[row_idx]
+                if row_idx < len(offset_row_profiles)
+                else None
+            )
+            source_slice_profile = _slice_profile_for_offset_row(
+                slice_profiles,
+                offset_row_profile=offset_row_profile,
+                offset_row_index=row_idx,
+                fallback_slice_position=row_slice_position,
+            )
+            if source_slice_profile is not None:
                 raw_surface_hit_mask = _paint_surface_hit_mask_2d(
                     full_row,
                     full_dirs,
-                    slice_points_work,
-                    row_axis_idx=row_axis_idx,
+                    source_slice_profile,
                     r_work=r_work,
                     origin=origin,
                     check_distance=paint_check_distance,
@@ -1031,6 +1105,16 @@ def generate_paint_spline_rows(
                 "surface_hit_mask": np.asarray(surface_hit_mask, dtype=bool).copy(),
                 "paint_mask": final_paint_mask.copy(),
                 "slice_position": row_slice_position,
+                "source_slice_row_index": (
+                    int(source_slice_profile.get("row_index", row_idx))
+                    if source_slice_profile is not None
+                    else None
+                ),
+                "source_slice_position": (
+                    float(source_slice_profile.get("slice_position", row_slice_position))
+                    if source_slice_profile is not None
+                    else np.nan
+                ),
                 "motion_profile": dict(sampled["motion_profile"]),
             }
         )

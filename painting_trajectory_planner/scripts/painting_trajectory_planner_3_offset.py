@@ -182,11 +182,13 @@ def generate_offset_rows(
 
     offset_rows = []
     offset_normals_world = []
+    offset_row_profiles = []
 
     if r_work.shape != (3, 3) or origin.size != 3 or not corrected_profiles:
         result["offset_points_world"] = np.empty((0, 3), float)
         result["offset_rows"] = []
         result["offset_row_normals_world"] = []
+        result["offset_row_profiles"] = []
         result["offset_point_spacing"] = float(offset_point_spacing)
         result["offset_distance"] = float(offset_distance)
         return result
@@ -224,6 +226,30 @@ def generate_offset_rows(
 
         offset_rows.append(original_offset_pts_world)
         offset_normals_world.append(offset_vecs_world)
+        offset_row_profiles.append(
+            {
+                "row_index": int(profile.get("row_index", len(offset_row_profiles))),
+                "slice_position": float(
+                    profile.get("slice_position", len(offset_row_profiles))
+                ),
+                "slice_plane_origin_work": np.asarray(
+                    profile.get("slice_plane_origin_work", []),
+                    dtype=float,
+                ).copy(),
+                "slice_plane_normal_work": np.asarray(
+                    profile.get("slice_plane_normal_work", []),
+                    dtype=float,
+                ).copy(),
+                "slice_plane_row_axis_work": np.asarray(
+                    profile.get("slice_plane_row_axis_work", []),
+                    dtype=float,
+                ).copy(),
+                "slice_plane_other_axis_work": np.asarray(
+                    profile.get("slice_plane_other_axis_work", []),
+                    dtype=float,
+                ).copy(),
+            }
+        )
 
     if offset_rows:
         result["offset_points_world"] = np.vstack(offset_rows)
@@ -232,6 +258,7 @@ def generate_offset_rows(
 
     result["offset_rows"] = offset_rows
     result["offset_row_normals_world"] = offset_normals_world
+    result["offset_row_profiles"] = offset_row_profiles
     result["offset_point_spacing"] = float(offset_point_spacing)
     result["offset_distance"] = float(offset_distance)
     return result

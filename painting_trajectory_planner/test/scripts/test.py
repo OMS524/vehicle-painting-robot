@@ -53,27 +53,27 @@ CASES = [
 
 
 
-    # {
-    #     "name": "ES300h_front_bumper",
-    #     "input_csv": DATA_DIR / "ES300h_front_bumper.ply",
-    #     "output_dir": CSV_DIR / "ES300h_front_bumper",
-    #     "paint_dir": [0.0, 0.0, -1.0],
-    #     "scan_dir": [0.0, 1.0, 0.0],
-    # },
-    # {
-    #     "name": "ES300h_hood",
-    #     "input_csv": DATA_DIR / "ES300h_hood.ply",
-    #     "output_dir": CSV_DIR / "ES300h_hood",
-    #     "paint_dir": [0.0, 0.0, -1.0],
-    #     "scan_dir": [-1.0, 0.0, 0.0],
-    # },
-    # {
-    #     "name": "ES300h_left_fender",
-    #     "input_csv": DATA_DIR / "ES300h_left_fender.ply",
-    #     "output_dir": CSV_DIR / "ES300h_left_fender",
-    #     "paint_dir": [0.0, -1.0, 0.0],
-    #     "scan_dir": [-1.0, 0.0, 0.0],
-    # },
+    {
+        "name": "ES300h_front_bumper",
+        "input_csv": DATA_DIR / "ES300h_front_bumper.ply",
+        "output_dir": CSV_DIR / "ES300h_front_bumper",
+        "paint_dir": [0.0, 0.0, -1.0],
+        "scan_dir": [0.0, 1.0, 0.0],
+    },
+    {
+        "name": "ES300h_hood",
+        "input_csv": DATA_DIR / "ES300h_hood.ply",
+        "output_dir": CSV_DIR / "ES300h_hood",
+        "paint_dir": [0.0, 0.0, -1.0],
+        "scan_dir": [-1.0, 0.0, 0.0],
+    },
+    {
+        "name": "ES300h_left_fender",
+        "input_csv": DATA_DIR / "ES300h_left_fender.ply",
+        "output_dir": CSV_DIR / "ES300h_left_fender",
+        "paint_dir": [0.0, -1.0, 0.0],
+        "scan_dir": [-1.0, 0.0, 0.0],
+    },
     {
         "name": "ES300h_trunk",
         "input_csv": DATA_DIR / "ES300h_trunk.ply",
@@ -81,20 +81,20 @@ CASES = [
         "paint_dir": [0.0, 0.0, -1.0],
         "scan_dir": [0.0, 1.0, 0.0],
     },
-    # {
-    #     "name": "NX350h_right_fender",
-    #     "input_csv": DATA_DIR / "NX350h_right_fender.ply",
-    #     "output_dir": CSV_DIR / "NX350h_right_fender",
-    #     "paint_dir": [0.0, -1.0, 0.0],
-    #     "scan_dir": [-1.0, 0.0, 0.0],
-    # },
-    # {
-    #     "name": "Tesla_Model_Y_front_bumper",
-    #     "input_csv": DATA_DIR / "Tesla_Model_Y_front_bumper.ply",
-    #     "output_dir": CSV_DIR / "Tesla_Model_Y_front_bumper",
-    #     "paint_dir": [0.0, 0.0, -1.0],
-    #     "scan_dir": [0.0, 1.0, 0.0],
-    # },
+    {
+        "name": "NX350h_right_fender",
+        "input_csv": DATA_DIR / "NX350h_right_fender.ply",
+        "output_dir": CSV_DIR / "NX350h_right_fender",
+        "paint_dir": [0.0, -1.0, 0.0],
+        "scan_dir": [-1.0, 0.0, 0.0],
+    },
+    {
+        "name": "Tesla_Model_Y_front_bumper",
+        "input_csv": DATA_DIR / "Tesla_Model_Y_front_bumper.ply",
+        "output_dir": CSV_DIR / "Tesla_Model_Y_front_bumper",
+        "paint_dir": [0.0, 0.0, -1.0],
+        "scan_dir": [0.0, 1.0, 0.0],
+    },
 
 
     # {

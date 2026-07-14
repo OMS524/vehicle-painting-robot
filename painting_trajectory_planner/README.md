@@ -66,12 +66,16 @@ slice_points_world
 
 1. point cloud를 작업 좌표계로 변환
 2. PCA 기반 local surface normal 추정
-3. `spline_start_side` 기준 첫 slice band 생성
-4. 현재 band의 대표 row tangent 계산
-5. 각 band 점의 surface normal과 tangent로 local spacing direction 계산
-6. 현재 band에서 local spacing direction으로 `spline_spacing`만큼 떨어진 표면 점들을 다음 band로 선택
-7. 새 band의 normal/tangent를 다시 계산해 표면 꺾임에 맞춰 slice 방향을 갱신
-8. band 내부는 correction 단계에서 3D surface graph로 다시 정렬
+3. point cloud를 `(row axis, slice axis)` occupancy cell로 나누고 `guide_extension_min_bin_points`개 이상인 cell만 유효 처리
+4. 각 row strip의 cell이 양옆 strip 중 하나 이상에서도 반복되는지 검사해 고립 노이즈 제거
+5. 중간의 빈 cell은 구멍으로 허용하고, 안정적으로 지지되는 최하단·최상단 범위가 가장 긴 row strip 선택
+6. 선택한 strip과 양옆 strip의 모든 점에서 upper hull을 추출해 최종 guide 생성
+7. 최종 guide point의 tangent를 법선으로 사용하는 local slicing plane 생성
+8. 각 local slicing plane의 `± geodesic_band_half_width` slab 안에 있는 모든 표면 점 추출
+9. 점이 `geodesic_min_band_points`보다 적을 때만 slab 폭을 단계적으로 확장
+10. 추출한 전체 점군을 local plane 좌표계의 correction 단계로 전달
+
+슬라이싱 평면 안의 점군이 중앙, 좌측, 우측처럼 여러 연결 성분으로 나뉘어 있어도 모두 `slice_points_work/world`에 보존한다. 가이드가 포함된 연결 성분만 선택하지 않는다.
 
 surface_marching mode의 `slice_position`은 row index이며, 실제 row 간격은 이전 row의 local surface frame을 따라 marching한 `spline_spacing`이다.
 
@@ -279,6 +283,7 @@ surface_extraction.geodesic_edge_max_factor
 surface_extraction.geodesic_seed_width
 surface_extraction.geodesic_seed_bin_spacing
 surface_extraction.geodesic_band_half_width
+surface_extraction.guide_extension_min_bin_points
 surface_extraction.geodesic_min_band_points
 correction.endpoint.graph_neighbor_count
 correction.endpoint.component_merge_backtrack_tolerance

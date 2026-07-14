@@ -34,6 +34,7 @@ class SurfaceExtractionConfig:
     geodesic_seed_width: float = 0.0
     geodesic_seed_bin_spacing: float = 0.0
     geodesic_band_half_width: float = 0.0
+    guide_extension_min_bin_points: int = 8
     geodesic_min_band_points: int = 8
 
     @classmethod

@@ -2,7 +2,7 @@ painting_trajectory:
   surface_extraction:
     # 슬라이싱 방식: axis / surface_marching
     # axis: 기존 작업 좌표계 축 기준 슬라이싱
-    # surface_marching: 중앙 strip의 upper guide curve를 만들고, guide tangent 기준 moving slicing plane으로 row 생성
+    # surface_marching: 인접 strip에서 반복 지지되는 위·아래 범위가 가장 긴 위치의 upper hull로 row 생성
     slicing_method: surface_marching
     # 로컬 작업 좌표계에서 슬라이스를 시작할 방향: top / bottom / left / right
     spline_start_side: top
@@ -12,19 +12,21 @@ painting_trajectory:
     spline_spacing: 0.05
     # 각 local slicing plane에서 raw 점군을 모을 때 쓰는 slab 반두께 [m]
     spline_half_width: 0.005
-    # surface_marching 모드에서 slicing slab의 연결 component를 고를 때 쓰는 최근접 이웃 개수
+    # 이전 surface_marching component 방식과의 설정 호환을 위해 유지하는 값 (현재 all-points slab 추출에서는 미사용)
     geodesic_neighbor_count: 12
     # surface_marching 모드에서 PCA 표면 법선 추정 시 각 점의 최근접 이웃 개수
     geodesic_normal_neighbor_count: 20
-    # surface_marching component graph에서 사용할 k-NN edge 길이 제한 계수
+    # 이전 surface_marching component graph 방식과의 설정 호환을 위해 유지하는 값 (현재 all-points slab 추출에서는 미사용)
     geodesic_edge_max_factor: 4.0
     # surface_marching debug 시작/끝 경계 후보 band 폭 [m]. 0 이하면 spline_half_width 사용
     geodesic_seed_width: 0.0
-    # surface_marching 중앙 strip guide를 만들 때 seed boundary bin 폭 [m]. 0 이하면 점군 해상도에서 자동 추정
+    # surface_marching debug 시작/끝 경계 후보를 row 방향으로 나누는 bin 폭 [m]. 0 이하면 점군 해상도에서 자동 추정
     geodesic_seed_bin_spacing: 0.0
-    # surface_marching local slicing plane slab 반폭 [m]. 0 이하면 spline_half_width 사용
+    # surface_marching occupancy row bin과 local slicing plane slab의 기준 반폭 [m]. 0 이하면 spline_half_width 사용
     geodesic_band_half_width: 0.0
-    # surface_marching band로 인정할 최소 점 개수
+    # guide strip 선택 시 (row-axis, slice-axis) occupancy cell의 최소 점 개수
+    guide_extension_min_bin_points: 8
+    # 이 개수보다 점이 적으면 local slicing slab 폭을 단계적으로 넓힘
     geodesic_min_band_points: 8
 
   correction:
