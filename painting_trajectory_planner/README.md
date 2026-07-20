@@ -62,7 +62,7 @@ slice_points_work
 slice_points_world
 ```
 
-`surface_extraction.slicing_method: surface_marching`로 설정하면 표면을 따라 전진하는 marching slicing을 사용한다. 기존 `geodesic` 값도 호환된다.
+`surface_extraction.slicing_method`에서 `axis` 또는 `surface_adaptive`를 선택한다.
 
 1. point cloud를 작업 좌표계로 변환
 2. PCA 기반 local surface normal 추정
@@ -77,13 +77,13 @@ slice_points_world
 
 슬라이싱 평면 안의 점군이 중앙, 좌측, 우측처럼 여러 연결 성분으로 나뉘어 있어도 모두 `slice_points_work/world`에 보존한다. 가이드가 포함된 연결 성분만 선택하지 않는다.
 
-surface_marching mode의 `slice_position`은 row index이며, 실제 row 간격은 이전 row의 local surface frame을 따라 marching한 `spline_spacing`이다.
+`surface_adaptive` mode의 `slice_position`은 row index이며, 실제 row 간격은 guide를 `spline_spacing` 간격으로 재샘플링해 결정한다.
 
 ## 2. Correction
 
 각 slice에서 추출한 점군을 하나의 표면 row로 정리하고 보정한다.
 
-axis mode의 correction은 축 기반 slice를 전제로 한다. 각 slice point를 작업 좌표계의 2D 평면으로 투영한다.
+`axis` mode의 correction은 축 기반 slice를 전제로 한다. 각 slice point를 작업 좌표계의 2D 평면으로 투영한다.
 
 ```text
 u = row_axis 좌표
@@ -161,9 +161,9 @@ correction_supported_sample_rows_world
 correction_endpoint_points_world
 ```
 
-surface_marching mode의 correction은 2D convex hull correction을 사용하지 않는다. 각 marched band 안에서 3D surface graph를 다시 구성하고, 가장 긴 대표 component path를 선택한 뒤 arc-length 기준으로 재샘플링하여 `corrected_rows`를 만든다.
+`surface_adaptive` mode는 각 local slicing plane 좌표계로 점을 변환한 뒤 동일한 upper-hull correction을 적용한다.
 
-surface_marching correction 출력은 다음을 포함한다.
+`surface_adaptive` correction 출력은 다음을 포함한다.
 
 ```text
 corrected_rows
@@ -178,10 +178,11 @@ correction_endpoint_points_world
 보정된 surface row를 TCP trajectory 기준 위치로 offset한다.
 
 1. corrected row를 `offset_point_spacing` 간격으로 재샘플링
-2. row tangent 계산
-3. tangent 방향 일관성 정리
-4. row chord 방향을 기준으로 normal 방향 결정
-5. 계산된 normal 방향으로 `offset_distance`만큼 이동
+2. 각 row를 해당 local slicing plane의 `(row axis, other axis)` 좌표로 변환
+3. local plane에서 row tangent를 계산하고 방향 일관성 정리
+4. tangent를 90도 회전해 row 형상에 수직인 normal 계산
+5. v1과 동일하게 row chord 진행 방향으로 normal 부호 결정
+6. 계산된 normal 방향으로 `offset_distance`만큼 이동
 
 출력은 다음과 같다.
 
@@ -191,7 +192,7 @@ offset_points_world
 offset_row_normals_world
 ```
 
-axis mode에서는 offset normal을 각 row의 2D 곡선 형태를 기준으로 계산한다. surface_marching mode에서는 surface extraction에서 추정한 surface normal을 우선 사용하고, normal 데이터가 없으면 기존 2D tangent 기반 normal로 fallback한다.
+`axis`와 `surface_adaptive` 모두 동일한 row 형상 기반 offset을 사용한다. `axis`에서는 local slicing plane이 작업 기준축과 일치하므로 v1 방식과 동일하고, `surface_adaptive`에서는 회전된 각 local slicing plane 안에서 같은 계산을 수행한다.
 
 ## 4. Spline Trajectory Generation
 
@@ -301,23 +302,22 @@ trajectory.max_acceleration
 
 ## 현재 한계
 
-axis slicing은 door, hood, bumper처럼 곡률이 비교적 완만하거나 기준축 slicing이 표면 흐름과 잘 맞는 부품에서 안정적이다. 하지만 trunk처럼 곡률이 크고 표면 흐름이 축과 크게 어긋나는 부품에서는 row가 표면을 자연스럽게 따라가지 못할 수 있다.
+`axis`는 door, hood, bumper처럼 기준축 slicing이 표면 흐름과 잘 맞는 부품에서 안정적이다. 하지만 곡률이 크고 표면 흐름이 축과 크게 어긋나는 부품에서는 row가 표면을 자연스럽게 따라가지 못할 수 있다.
 
-surface_marching slicing은 이 문제를 줄이기 위해 추가된 표면 추종 방식이다. 현재 surface_marching mode는 v1 구현이며 다음 특성이 있다.
+`surface_adaptive`는 이 문제를 줄이기 위한 형상 대응 방식이며 다음 특성이 있다.
 
 ```text
-현재 row의 tangent와 local surface normal로 다음 row 방향 계산
-local spacing direction으로 `spline_spacing`만큼 전진
-marched band 내부에서 가장 긴 대표 path 선택
-band path는 arc-length resampling만 수행
-기존 B-Spline trajectory 생성 단계는 그대로 사용
+인접 strip에서 반복 지지되는 occupancy cell로 고립 노이즈 제거
+내부 빈 구간은 부품의 구멍으로 허용
+위·아래 유효 범위가 가장 긴 strip 주변에서 upper hull guide 생성
+guide tangent 기준 local slicing plane 생성
 ```
 
 현재 선택식 구조는 다음과 같다.
 
 ```yaml
 surface_extraction:
-  slicing_method: axis   # axis | surface_marching
+  slicing_method: axis   # axis | surface_adaptive
 ```
 
-이렇게 하면 기존 부품에서는 안정적인 축 기반 slicing을 유지하고, trunk 같은 부품에서만 surface_marching slicing을 비교 적용할 수 있다.
+이렇게 하면 부품별로 고정 축 기반 slicing과 형상 대응 slicing을 선택할 수 있다.

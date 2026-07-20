@@ -35,6 +35,7 @@ BUMPER_SCAN_DIR = [1.0, 0.0, 0.0]
 DOOR_PAINT_DIR = [0.0, 1.0, 0.0]
 DOOR_SCAN_DIR = [1.0, 0.0, 0.0]
 
+# 각 case의 slicing_method는 "axis" 또는 "surface_adaptive"로 지정합니다.
 CASES = [
     # {
     #     "name": "car_bumper_small",
@@ -59,6 +60,7 @@ CASES = [
         "output_dir": CSV_DIR / "ES300h_front_bumper",
         "paint_dir": [0.0, 0.0, -1.0],
         "scan_dir": [0.0, 1.0, 0.0],
+        "slicing_method": "axis",
     },
     {
         "name": "ES300h_hood",
@@ -66,6 +68,7 @@ CASES = [
         "output_dir": CSV_DIR / "ES300h_hood",
         "paint_dir": [0.0, 0.0, -1.0],
         "scan_dir": [-1.0, 0.0, 0.0],
+        "slicing_method": "surface_adaptive",
     },
     {
         "name": "ES300h_left_fender",
@@ -73,6 +76,7 @@ CASES = [
         "output_dir": CSV_DIR / "ES300h_left_fender",
         "paint_dir": [0.0, -1.0, 0.0],
         "scan_dir": [-1.0, 0.0, 0.0],
+        "slicing_method": "surface_adaptive",
     },
     {
         "name": "ES300h_trunk",
@@ -80,6 +84,7 @@ CASES = [
         "output_dir": CSV_DIR / "ES300h_trunk",
         "paint_dir": [0.0, 0.0, -1.0],
         "scan_dir": [0.0, 1.0, 0.0],
+        "slicing_method": "surface_adaptive",
     },
     {
         "name": "NX350h_right_fender",
@@ -87,6 +92,7 @@ CASES = [
         "output_dir": CSV_DIR / "NX350h_right_fender",
         "paint_dir": [0.0, -1.0, 0.0],
         "scan_dir": [-1.0, 0.0, 0.0],
+        "slicing_method": "surface_adaptive",
     },
     {
         "name": "Tesla_Model_Y_front_bumper",
@@ -94,6 +100,7 @@ CASES = [
         "output_dir": CSV_DIR / "Tesla_Model_Y_front_bumper",
         "paint_dir": [0.0, 0.0, -1.0],
         "scan_dir": [0.0, 1.0, 0.0],
+        "slicing_method": "axis",
     },
 
 
@@ -634,6 +641,7 @@ def generate_case(case: dict) -> dict:
         extraction_kwargs={
             "paint_dir": case["paint_dir"],
             "scan_dir": case["scan_dir"],
+            "slicing_method": case["slicing_method"],
         },
         structuring_kwargs={
             "save_csv": True,
@@ -647,7 +655,8 @@ def generate_case(case: dict) -> dict:
     point_count = sum(len(row.points) for row in result["painting_trajectory"].rows)
     print(
         f"[{case['name']}] points={len(point_cloud_xyz)} "
-        f"rows={row_count} trajectory_points={point_count}"
+        f"mode={case['slicing_method']} rows={row_count} "
+        f"trajectory_points={point_count}"
     )
     print(f"[{case['name']}] csv={result['painting_trajectory_csv_files']}")
     if SAVE_DEBUG_HTML:

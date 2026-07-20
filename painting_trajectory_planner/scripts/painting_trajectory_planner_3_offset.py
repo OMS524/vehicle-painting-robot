@@ -130,15 +130,55 @@ def _orient_tangents_along_row(points_2d, tangents_2d):
     return oriented
 
 
-def _offset_vectors_from_work_row(
+def _offset_vectors_from_slice_plane_row(
     sampled_points_work,
+    plane_origin_work,
+    plane_row_axis_work,
+    plane_other_axis_work,
     row_axis_idx,
 ):
+    """Compute v1-style row normals in each slice profile's local plane."""
     pts = np.asarray(sampled_points_work, float)
     if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
         return np.empty((0, 3), float)
 
-    pts_uw = np.asarray(pts[:, [row_axis_idx, 2]], float)
+    fallback_row_axis = np.zeros(3, dtype=float)
+    fallback_row_axis[int(row_axis_idx)] = 1.0
+    outward_axis = np.array([0.0, 0.0, 1.0], dtype=float)
+
+    plane_row_axis = np.asarray(plane_row_axis_work, float).reshape(-1)
+    if plane_row_axis.size != 3 or np.linalg.norm(plane_row_axis) <= 1e-12:
+        plane_row_axis = fallback_row_axis
+    plane_row_axis = _safe_normalize(plane_row_axis)
+
+    plane_other_axis = np.asarray(plane_other_axis_work, float).reshape(-1)
+    if plane_other_axis.size != 3 or np.linalg.norm(plane_other_axis) <= 1e-12:
+        plane_other_axis = outward_axis.copy()
+    plane_other_axis = (
+        plane_other_axis
+        - float(np.dot(plane_other_axis, plane_row_axis)) * plane_row_axis
+    )
+    if np.linalg.norm(plane_other_axis) <= 1e-12:
+        plane_other_axis = (
+            outward_axis
+            - float(np.dot(outward_axis, plane_row_axis)) * plane_row_axis
+        )
+    if np.linalg.norm(plane_other_axis) <= 1e-12:
+        return np.empty((0, 3), float)
+    plane_other_axis = _safe_normalize(plane_other_axis)
+    if float(np.dot(plane_other_axis, outward_axis)) < 0.0:
+        plane_other_axis *= -1.0
+
+    plane_origin = np.asarray(plane_origin_work, float).reshape(-1)
+    if plane_origin.size != 3 or not np.all(np.isfinite(plane_origin)):
+        plane_origin = np.mean(pts, axis=0)
+    relative = pts - plane_origin.reshape(1, 3)
+    pts_uw = np.column_stack(
+        [
+            relative @ plane_row_axis,
+            relative @ plane_other_axis,
+        ]
+    )
     tangents_uw = _row_tangents_2d(pts_uw)
     tangents_uw = _orient_tangents_along_row(pts_uw, tangents_uw)
     if len(tangents_uw) != len(pts_uw):
@@ -160,13 +200,13 @@ def _offset_vectors_from_work_row(
         normals_uw = np.column_stack([tangents_uw[:, 1], -tangents_uw[:, 0]])
     normals_uw = _safe_normalize_rows_2d(normals_uw)
 
-    for idx, normal_uw in enumerate(normals_uw):
-        offset_vectors[idx, row_axis_idx] = normal_uw[0]
-        offset_vectors[idx, 2] = normal_uw[1]
-        offset_vectors[idx] = _safe_normalize(offset_vectors[idx])
+    offset_vectors = (
+        normals_uw[:, 0:1] * plane_row_axis.reshape(1, 3)
+        + normals_uw[:, 1:2] * plane_other_axis.reshape(1, 3)
+    )
+    offset_vectors = _safe_normalize_rows(offset_vectors)
 
     return offset_vectors
-
 
 
 def generate_offset_rows(
@@ -210,15 +250,15 @@ def generate_offset_rows(
         if sampled_pts_work is None or len(sampled_pts_work) < 2:
             continue
 
-        plane_other_axis_work = np.asarray(profile.get("slice_plane_other_axis_work", []), float).reshape(-1)
-        if plane_other_axis_work.size == 3 and np.linalg.norm(plane_other_axis_work) > 1e-12:
-            offset_axis_work = _safe_normalize(plane_other_axis_work)
-            offset_vecs_work = np.repeat(offset_axis_work.reshape(1, 3), len(sampled_pts_work), axis=0)
-        else:
-            offset_vecs_work = _offset_vectors_from_work_row(
-                sampled_pts_work,
-                row_axis_idx=row_axis_idx,
-            )
+        offset_vecs_work = _offset_vectors_from_slice_plane_row(
+            sampled_pts_work,
+            plane_origin_work=profile.get("slice_plane_origin_work", []),
+            plane_row_axis_work=profile.get("slice_plane_row_axis_work", []),
+            plane_other_axis_work=profile.get("slice_plane_other_axis_work", []),
+            row_axis_idx=row_axis_idx,
+        )
+        if len(offset_vecs_work) != len(sampled_pts_work):
+            continue
 
         sampled_pts_world = work_to_world(sampled_pts_work)
         offset_vecs_world = _safe_normalize_rows(dir_to_world(offset_vecs_work))

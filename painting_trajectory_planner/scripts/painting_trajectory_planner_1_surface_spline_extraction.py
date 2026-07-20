@@ -60,6 +60,17 @@ def _spline_scan_config(spline_start_side):
     raise ValueError("spline_start_side must be one of: top, bottom, left, right")
 
 
+def _normalize_slicing_method(slicing_method):
+    method = str(slicing_method).strip().lower()
+    if method == "axis":
+        return "axis"
+    if method == "surface_adaptive":
+        return "surface_adaptive"
+    raise ValueError(
+        "slicing_method must be one of: axis, surface_adaptive"
+    )
+
+
 def _build_work_frame(points_world, paint_dir_world, scan_dir_world):
     p = np.asarray(points_world, dtype=float)
     origin = np.mean(p, axis=0)
@@ -613,7 +624,7 @@ def _generate_axis_slice_profiles(pw, work_to_world, slice_cfg, spline_spacing, 
     return profiles
 
 
-def _generate_surface_marching_slice_profiles(
+def _generate_surface_adaptive_slice_profiles(
     pw,
     work_to_world,
     slice_cfg,
@@ -776,7 +787,7 @@ def _generate_surface_marching_slice_profiles(
                 plane_row_axis_work=plane_row_axis_work,
                 plane_other_axis_work=plane_other_axis_work,
                 work_to_world=work_to_world,
-                slicing_method="surface_marching",
+                slicing_method="surface_adaptive",
                 extra=extra,
             )
         )
@@ -802,6 +813,8 @@ def generate_surface_spline_rows(
     guide_extension_min_bin_points=8,
     geodesic_min_band_points=8,
 ):
+    method = _normalize_slicing_method(slicing_method)
+
     def _empty_result(points_used, r_work=None, origin=None, view_dir=None, surface_dir=None):
         return {
             "point_cloud_used": np.asarray(points_used, dtype=float),
@@ -809,7 +822,7 @@ def generate_surface_spline_rows(
             "work_origin_world": origin,
             "view_dir_world": view_dir,
             "surface_dir_world": surface_dir,
-            "slicing_method": str(slicing_method),
+            "slicing_method": method,
             "spline_start_side": str(spline_start_side),
             "spline_start_offset": float(spline_start_offset),
             "spline_point_spacing": float(spline_point_spacing),
@@ -829,8 +842,6 @@ def generate_surface_spline_rows(
     spline_point_spacing = max(float(spline_point_spacing), 1e-4)
     spline_half_width = max(float(spline_half_width), 1e-6)
     spline_start_offset = max(float(spline_start_offset), 0.0)
-    method = str(slicing_method).strip().lower()
-
     if method == "axis":
         slice_profiles = _generate_axis_slice_profiles(
             points_work,
@@ -840,9 +851,8 @@ def generate_surface_spline_rows(
             spline_half_width=spline_half_width,
             spline_start_offset=spline_start_offset,
         )
-    elif method in {"geodesic", "surface_marching", "surface_following", "guide_curve"}:
-        method = "surface_marching"
-        slice_profiles = _generate_surface_marching_slice_profiles(
+    else:
+        slice_profiles = _generate_surface_adaptive_slice_profiles(
             points_work,
             work_to_world=work_to_world,
             slice_cfg=slice_cfg,
@@ -858,9 +868,6 @@ def generate_surface_spline_rows(
             guide_extension_min_bin_points=guide_extension_min_bin_points,
             geodesic_min_band_points=geodesic_min_band_points,
         )
-    else:
-        raise ValueError("slicing_method must be one of: axis, surface_marching")
-
     return {
         "point_cloud_used": points.copy(),
         "work_frame_world": r_work,
