@@ -25,7 +25,7 @@ surface point cloud
 → 5. structuring / csv export
 ```
 
-주요 구현 파일은 `painting_trajectory_planner/scripts` 아래에 단계별로 나뉘어 있다.
+주요 구현 파일은 `painting_trajectory_planner/path_planner/scripts` 아래에 단계별로 나뉘어 있다.
 
 ```text
 painting_trajectory_planner.py
@@ -272,7 +272,7 @@ paint
 
 ## 주요 파라미터
 
-기본 파라미터는 `painting_trajectory_planner/config/painting_trajectory.yaml`에서 관리한다.
+기본 파라미터는 `painting_trajectory_planner/path_planner/config/painting_trajectory.yaml`에서 관리한다.
 
 ```text
 surface_extraction.spline_spacing
@@ -281,8 +281,6 @@ surface_extraction.slicing_method
 surface_extraction.geodesic_neighbor_count
 surface_extraction.geodesic_normal_neighbor_count
 surface_extraction.geodesic_edge_max_factor
-surface_extraction.geodesic_seed_width
-surface_extraction.geodesic_seed_bin_spacing
 surface_extraction.geodesic_band_half_width
 surface_extraction.guide_extension_min_bin_points
 surface_extraction.geodesic_min_band_points
