@@ -8,7 +8,7 @@
       "front": [x, y, z], 
       "left": [x, y, z],
       "up": [x, y, z],
-      "speed": 0.0 or 0.8,
+      "speed": 0.8,
       "gun_trigger": "nothing" or "open" or "close",
       "gun_trigger_delay": 0,
       "gun_power": 1.0,
