@@ -196,7 +196,7 @@ offset_row_normals_world
 
 ## 4. Spline Trajectory Generation
 
-offset row를 입력받아 실제 제어 주기에 맞는 시간 기반 trajectory를 생성한다.
+offset row를 입력받아 일정한 공간 간격의 trajectory를 생성한다.
 
 각 row 처리 순서:
 
@@ -206,19 +206,16 @@ offset row를 입력받아 실제 제어 주기에 맞는 시간 기반 trajecto
 4. dense sampling으로 spline arc-length table 생성
 5. 시작점/끝점 tangent 방향으로 extension 생성
 6. extension 포함 전체 row의 arc-length table 생성
-7. 전체 길이, 목표 속도, 최대 가속도로 사다리꼴 속도 프로파일 생성
-8. `control_dt`마다 `t`, `s`, `path_speed`, `path_acceleration` 샘플링
-9. 각 `s`에서 position 계산
-10. 각 `s`에서 분사 방향 보간
-11. 각 `s`에서 tangent 계산
-12. tangent와 분사 방향으로 TCP orientation quaternion 계산
-13. 표면 hit 검사
-14. core 구간과 surface hit 결과를 합쳐 paint mask 생성
-15. `linear_velocity = tangent * path_speed` 계산
-16. quaternion 차분과 path speed로 angular velocity 계산
-17. row별 trajectory 배열 저장
+7. 전체 길이를 `final_point_spacing` 고정 아크길이 간격으로 샘플링하고 짧은 마지막 잔여 구간은 제외
+8. 각 누적 거리 `s`에서 position 계산
+9. 각 `s`에서 분사 방향 보간
+10. 각 `s`에서 tangent 계산
+11. tangent와 분사 방향으로 TCP orientation quaternion 계산
+12. 표면 hit 검사
+13. core 구간과 surface hit 결과를 합쳐 paint mask 생성
+14. row별 trajectory 배열 저장
 
-`raster_zigzag`가 켜져 있으면 row 진행 방향을 한 줄씩 번갈아 뒤집는다. 이때 position, tangent, velocity, acceleration, paint mask도 함께 뒤집힌다.
+`raster_zigzag`가 켜져 있으면 row 진행 방향을 한 줄씩 번갈아 뒤집는다. 이때 position, tangent, orientation, paint mask도 함께 뒤집힌다.
 
 ## 5. Structuring / CSV Export
 
@@ -227,14 +224,9 @@ offset row를 입력받아 실제 제어 주기에 맞는 시간 기반 trajecto
 ```python
 @dataclass(slots=True)
 class TrajectoryPoint:
-    t: float
     s: float
     position: Vec3
     orientation: Quat
-    linear_velocity: Vec3
-    angular_velocity: Vec3
-    path_speed: float
-    path_acceleration: float
     paint: bool
 
 
@@ -247,9 +239,6 @@ class TrajectoryRow:
 @dataclass(slots=True)
 class PaintTrajectory:
     frame_id: str
-    control_dt: float
-    desired_speed: float
-    max_acceleration: float
     rows: list[TrajectoryRow] = field(default_factory=list)
 ```
 
@@ -259,14 +248,9 @@ CSV에는 다음 정보가 저장된다.
 row_index
 point_index
 frame_id
-t
 s
 position
 orientation
-linear_velocity
-angular_velocity
-path_speed
-path_acceleration
 paint
 ```
 
@@ -291,11 +275,9 @@ correction.optimization.lambda_*
 offset.offset_point_spacing
 offset.offset_distance
 spline.spline_point_spacing
+spline.final_point_spacing
 spline.endpoint_extension_length
 spline.raster_zigzag
-trajectory.desired_speed
-trajectory.control_dt
-trajectory.max_acceleration
 ```
 
 ## 현재 한계

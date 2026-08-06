@@ -21,6 +21,34 @@ path_editor/
 `painting_trajectory.yaml`이 필요하다. 프로젝트를 바꾸면 해당 디렉터리의
 YAML도 함께 불러온다. `trajectory_*.csv`와 기존 debug HTML은 Reviewer가 읽지 않는다.
 
+## 부품별 단일 HTML
+
+Tauri 앱과 별도로, 각 부품의 PLY·전체 trajectory CSV·YAML 및 Reviewer
+프론트엔드를 모두 내장한 단일 HTML을 생성할 수 있다.
+
+```bash
+cd /home/oms/vehicle_painting_robot/painting_trajectory_planner/path_editor
+python3 standalone_html/build_standalone.py
+```
+
+결과는 `standalone_html/<project_name>.html`에 생성된다. 각 HTML은 외부
+JavaScript, CSS, 데이터 파일 또는 로컬 서버를 사용하지 않으므로 파일 하나만
+다른 컴퓨터로 복사한 뒤 브라우저에서 직접 열 수 있다. 화면 구성과 기능은
+Tauri Reviewer와 동일하며, 생성 시점의 데이터를 읽기 전용으로 표시한다.
+
+스크립트는 기본적으로 최신 프론트엔드를 npm으로 먼저 빌드한다. 현재 `dist`를
+그대로 사용해 데이터만 다시 내장하려면 다음처럼 실행한다.
+
+```bash
+python3 standalone_html/build_standalone.py --skip-frontend-build
+```
+
+특정 부품만 생성할 수도 있다.
+
+```bash
+python3 standalone_html/build_standalone.py ES300h_hood ES300h_trunk
+```
+
 ## Ubuntu 완성 앱 실행
 
 `Painting_Trajectory_Reviewer_0.1.0_amd64.AppImage`와 `data` 디렉터리를 같은

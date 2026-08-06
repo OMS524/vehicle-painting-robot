@@ -13,7 +13,6 @@ interface TrajectoryViewerProps {
   trajectory: TrajectoryDataset | null;
   layers: LayerVisibility;
   visualization: VisualizationSettings;
-  selectedRowId: number | null;
 }
 
 interface ViewerRuntime {
@@ -24,7 +23,7 @@ interface ViewerRuntime {
   surfaceGroup: THREE.Group;
   pathGroup: THREE.Group;
   sprayOffGroup: THREE.Group;
-  selectedGroup: THREE.Group;
+  sprayDirectionGroup: THREE.Group;
   axes: THREE.AxesHelper;
   hemisphereLight: THREE.HemisphereLight;
   keyLight: THREE.DirectionalLight;
@@ -56,7 +55,12 @@ function clearGroup(group: THREE.Group): void {
 
 function fitCamera(runtime: ViewerRuntime): void {
   const content = new THREE.Group();
-  for (const group of [runtime.surfaceGroup, runtime.pathGroup, runtime.sprayOffGroup]) {
+  for (const group of [
+    runtime.surfaceGroup,
+    runtime.pathGroup,
+    runtime.sprayOffGroup,
+    runtime.sprayDirectionGroup,
+  ]) {
     for (const child of group.children) {
       content.add(child.clone());
     }
@@ -101,12 +105,87 @@ function buildTrajectorySegments(
   return geometry;
 }
 
+function buildSprayDirections(trajectory: TrajectoryDataset): THREE.Group {
+  const directionLength = 0.08;
+  const linePositions: number[] = [];
+  const lineColors: number[] = [];
+  const tipPositions: number[] = [];
+  const tipColors: number[] = [];
+  const localSprayAxis = new THREE.Vector3(0, 0, 1);
+  const sprayDirection = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const paintColor = new THREE.Color(0x4cc9f0);
+  const offColor = new THREE.Color(0x55798a);
+
+  for (const row of trajectory.rows) {
+    for (const point of row.points) {
+      quaternion.fromArray(point.orientation).normalize();
+      sprayDirection
+        .copy(localSprayAxis)
+        .applyQuaternion(quaternion)
+        .normalize();
+
+      const [x, y, z] = point.position;
+      const tipX = x + sprayDirection.x * directionLength;
+      const tipY = y + sprayDirection.y * directionLength;
+      const tipZ = z + sprayDirection.z * directionLength;
+      const color = point.paint ? paintColor : offColor;
+
+      linePositions.push(x, y, z, tipX, tipY, tipZ);
+      lineColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+      tipPositions.push(tipX, tipY, tipZ);
+      tipColors.push(color.r, color.g, color.b);
+    }
+  }
+
+  const group = new THREE.Group();
+  const lineGeometry = new THREE.BufferGeometry();
+  lineGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(linePositions, 3),
+  );
+  lineGeometry.setAttribute(
+    "color",
+    new THREE.Float32BufferAttribute(lineColors, 3),
+  );
+  group.add(
+    new THREE.LineSegments(
+      lineGeometry,
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.82,
+      }),
+    ),
+  );
+
+  const tipGeometry = new THREE.BufferGeometry();
+  tipGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(tipPositions, 3),
+  );
+  tipGeometry.setAttribute(
+    "color",
+    new THREE.Float32BufferAttribute(tipColors, 3),
+  );
+  group.add(
+    new THREE.Points(
+      tipGeometry,
+      new THREE.PointsMaterial({
+        vertexColors: true,
+        size: 0.006,
+        sizeAttenuation: true,
+      }),
+    ),
+  );
+  return group;
+}
+
 export function TrajectoryViewer({
   surfaceBuffer,
   trajectory,
   layers,
   visualization,
-  selectedRowId,
 }: TrajectoryViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<ViewerRuntime | null>(null);
@@ -152,10 +231,10 @@ export function TrajectoryViewer({
     pathGroup.name = "trajectory";
     const sprayOffGroup = new THREE.Group();
     sprayOffGroup.name = "spray-off";
-    const selectedGroup = new THREE.Group();
-    selectedGroup.name = "selected-row";
+    const sprayDirectionGroup = new THREE.Group();
+    sprayDirectionGroup.name = "spray-directions";
     const axes = new THREE.AxesHelper(0.35);
-    scene.add(surfaceGroup, pathGroup, sprayOffGroup, selectedGroup, axes);
+    scene.add(surfaceGroup, pathGroup, sprayOffGroup, sprayDirectionGroup, axes);
 
     const runtime: ViewerRuntime = {
       renderer,
@@ -165,7 +244,7 @@ export function TrajectoryViewer({
       surfaceGroup,
       pathGroup,
       sprayOffGroup,
-      selectedGroup,
+      sprayDirectionGroup,
       axes,
       hemisphereLight,
       keyLight,
@@ -205,7 +284,7 @@ export function TrajectoryViewer({
       clearGroup(surfaceGroup);
       clearGroup(pathGroup);
       clearGroup(sprayOffGroup);
-      clearGroup(selectedGroup);
+      clearGroup(sprayDirectionGroup);
       renderer.dispose();
       renderer.domElement.remove();
       runtimeRef.current = null;
@@ -275,6 +354,7 @@ export function TrajectoryViewer({
     }
     clearGroup(runtime.pathGroup);
     clearGroup(runtime.sprayOffGroup);
+    clearGroup(runtime.sprayDirectionGroup);
 
     const paintGeometry = buildTrajectorySegments(trajectory, true);
     const paintPath = new THREE.LineSegments(
@@ -289,6 +369,9 @@ export function TrajectoryViewer({
       new THREE.LineBasicMaterial({ color: 0xffc857, transparent: true, opacity: 0.85 }),
     );
     runtime.sprayOffGroup.add(offPath);
+
+    const sprayDirections = buildSprayDirections(trajectory);
+    runtime.sprayDirectionGroup.add(sprayDirections);
     fitCamera(runtime);
   }, [trajectory]);
 
@@ -300,33 +383,9 @@ export function TrajectoryViewer({
     runtime.surfaceGroup.visible = layers.surface;
     runtime.pathGroup.visible = layers.trajectory;
     runtime.sprayOffGroup.visible = layers.trajectory && layers.sprayOff;
-    runtime.selectedGroup.visible = layers.trajectory;
+    runtime.sprayDirectionGroup.visible = layers.sprayDirections;
     runtime.axes.visible = layers.axes;
   }, [layers]);
-
-  useEffect(() => {
-    const runtime = runtimeRef.current;
-    if (!runtime) {
-      return;
-    }
-    clearGroup(runtime.selectedGroup);
-    if (selectedRowId === null || !trajectory) {
-      return;
-    }
-    const selected = trajectory.rows.find((row) => row.rowIndex === selectedRowId);
-    if (!selected || selected.points.length < 2) {
-      return;
-    }
-    const positions = selected.points.flatMap((point) => point.position);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    runtime.selectedGroup.add(
-      new THREE.Line(
-        geometry,
-        new THREE.LineBasicMaterial({ color: 0xff4fd8, depthTest: false }),
-      ),
-    );
-  }, [selectedRowId, trajectory]);
 
   const setView = (direction: THREE.Vector3) => {
     const runtime = runtimeRef.current;

@@ -44,7 +44,6 @@ export function parseTrajectoryCsv(buffer: ArrayBuffer): TrajectoryDataset {
   const required = [
     "row_index",
     "point_index",
-    "t",
     "s",
     "position_x",
     "position_y",
@@ -53,8 +52,6 @@ export function parseTrajectoryCsv(buffer: ArrayBuffer): TrajectoryDataset {
     "orientation_y",
     "orientation_z",
     "orientation_w",
-    "path_speed",
-    "path_acceleration",
     "paint",
   ];
   for (const name of required) {
@@ -94,10 +91,7 @@ export function parseTrajectoryCsv(buffer: ArrayBuffer): TrajectoryDataset {
         numberAt(values, column.get("orientation_z")!),
         numberAt(values, column.get("orientation_w")!),
       ],
-      time: numberAt(values, column.get("t")!),
       distance: numberAt(values, column.get("s")!),
-      speed: numberAt(values, column.get("path_speed")!),
-      acceleration: numberAt(values, column.get("path_acceleration")!),
       paint,
     };
     const row = rowsByIndex.get(rowIndex);
@@ -123,7 +117,6 @@ export function parseTrajectoryCsv(buffer: ArrayBuffer): TrajectoryDataset {
         rowIndex,
         points,
         length: Math.max(0, last.distance - first.distance),
-        duration: Math.max(0, last.time - first.time),
         paintRatio: points.length ? rowPaintPoints / points.length : 0,
       };
     });

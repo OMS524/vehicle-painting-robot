@@ -68,11 +68,13 @@ painting_trajectory:
     # offset 생성 전 corrected row를 다시 샘플링하는 간격 [m]
     offset_point_spacing: 0.025
     # corrected surface path에서 법선 방향으로 떨어질 offset 거리 [m]
-    offset_distance: 0.3
+    offset_distance: 0.15
 
   spline:
     # spline arc-length table 생성을 위한 내부 샘플링 해상도 [m]
     spline_point_spacing: 0.0001
+    # 최종 경로 포인트의 고정 아크길이 간격 [m]
+    final_point_spacing: 0.04
     # 생성된 paint spline 양 끝을 끝 접선 방향으로 직선 연장할 길이 [m]
     endpoint_extension_length: 0.1
     # trajectory row를 생성하기 전에 한 줄씩 번갈아 뒤집어 지그재그 진행 방향으로 만들지 여부
@@ -85,14 +87,6 @@ painting_trajectory:
     paint_min_false_length: 0.5
     # 분사 T/F 검사 시 양옆이 False인 경우, 이 길이보다 짧은 연속 True 구간은 False로 메움 [m]
     paint_min_true_length: 0.005
-
-  trajectory:
-    # TCP 경로 방향 목표 속도 [m/s]
-    desired_speed: 0.1
-    # 로봇 제어 주기 [s]
-    control_dt: 0.01
-    # TCP 경로 방향 최대 가속도 [m/s^2]
-    max_acceleration: 0.5
 
   structuring:
     # 구조화된 PaintingTrajectory의 frame_id

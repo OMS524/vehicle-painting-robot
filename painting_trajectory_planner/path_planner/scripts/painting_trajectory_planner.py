@@ -145,6 +145,7 @@ class OffsetConfig:
 @dataclass
 class SplineConfig:
     spline_point_spacing: float
+    final_point_spacing: float
     endpoint_extension_length: float
     raster_zigzag: bool
     paint_check_distance: float
@@ -164,6 +165,7 @@ class SplineConfig:
     def to_kwargs(self):
         return {
             "paint_spline_point_spacing": self.spline_point_spacing,
+            "final_point_spacing": self.final_point_spacing,
             "endpoint_extension_length": self.endpoint_extension_length,
             "raster_zigzag": self.raster_zigzag,
             "paint_check_distance": self.paint_check_distance,
@@ -174,20 +176,6 @@ class SplineConfig:
 
 
 PaintSplineConfig = SplineConfig
-
-
-@dataclass
-class TrajectoryConfig:
-    desired_speed: float
-    control_dt: float
-    max_acceleration: float
-
-    @classmethod
-    def from_dict(cls, data=None):
-        return _dataclass_from_dict(cls, data)
-
-    def to_kwargs(self):
-        return asdict(self)
 
 
 @dataclass
@@ -212,7 +200,6 @@ class PaintingTrajectoryConfig:
     correction: CorrectionConfig
     offset: OffsetConfig
     spline: SplineConfig
-    trajectory: TrajectoryConfig
     structuring: StructuringConfig
 
     @classmethod
@@ -240,7 +227,6 @@ class PaintingTrajectoryConfig:
             correction=CorrectionConfig.from_dict(source.get("correction", {})),
             offset=OffsetConfig.from_dict(source.get("offset", {})),
             spline=SplineConfig.from_dict(spline_data),
-            trajectory=TrajectoryConfig.from_dict(source.get("trajectory", {})),
             structuring=StructuringConfig.from_dict(structuring_data),
         )
 
@@ -370,7 +356,6 @@ PAINTING_TRAJECTORY_CSV_HEADER = [
     "row_index",
     "point_index",
     "frame_id",
-    "t",
     "s",
     "position_x",
     "position_y",
@@ -379,14 +364,6 @@ PAINTING_TRAJECTORY_CSV_HEADER = [
     "orientation_y",
     "orientation_z",
     "orientation_w",
-    "linear_velocity_x",
-    "linear_velocity_y",
-    "linear_velocity_z",
-    "angular_velocity_x",
-    "angular_velocity_y",
-    "angular_velocity_z",
-    "path_speed",
-    "path_acceleration",
     "paint",
 ]
 
@@ -449,13 +426,10 @@ def _unique_csv_path(path, used_paths):
 def _csv_row(frame_id, row_index, point_index, point):
     position = list(getattr(point, "position", (0.0, 0.0, 0.0)))
     orientation = list(getattr(point, "orientation", (0.0, 0.0, 0.0, 1.0)))
-    linear_velocity = list(getattr(point, "linear_velocity", (0.0, 0.0, 0.0)))
-    angular_velocity = list(getattr(point, "angular_velocity", (0.0, 0.0, 0.0)))
     return [
         int(row_index),
         int(point_index),
         str(frame_id),
-        float(getattr(point, "t", 0.0)),
         float(getattr(point, "s", 0.0)),
         float(position[0]),
         float(position[1]),
@@ -464,14 +438,6 @@ def _csv_row(frame_id, row_index, point_index, point):
         float(orientation[1]),
         float(orientation[2]),
         float(orientation[3]),
-        float(linear_velocity[0]),
-        float(linear_velocity[1]),
-        float(linear_velocity[2]),
-        float(angular_velocity[0]),
-        float(angular_velocity[1]),
-        float(angular_velocity[2]),
-        float(getattr(point, "path_speed", 0.0)),
-        float(getattr(point, "path_acceleration", 0.0)),
         int(bool(getattr(point, "paint", False))),
     ]
 
@@ -617,7 +583,6 @@ def _generate_stage4_result(
     }
     paint_spline_kwargs = {
         **paint_config.spline.to_kwargs(),
-        **paint_config.trajectory.to_kwargs(),
         **dict(paint_spline_kwargs or {}),
         **dict(spline_kwargs or {}),
     }

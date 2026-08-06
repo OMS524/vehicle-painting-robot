@@ -11,14 +11,9 @@ Quat = tuple[float, float, float, float]
 
 @dataclass(slots=True)
 class TrajectoryPoint:
-    t: float
     s: float
     position: Vec3
     orientation: Quat
-    linear_velocity: Vec3
-    angular_velocity: Vec3
-    path_speed: float
-    path_acceleration: float
     paint: bool
 
 
@@ -31,9 +26,6 @@ class TrajectoryRow:
 @dataclass(slots=True)
 class PaintTrajectory:
     frame_id: str
-    control_dt: float
-    desired_speed: float
-    max_acceleration: float
     rows: list[TrajectoryRow] = field(default_factory=list)
 
 
@@ -134,7 +126,7 @@ def _continuous_quaternions(orientations):
     return quats
 
 
-def _row_arrays(paint_spline_result, row_index, control_dt):
+def _row_arrays(paint_spline_result, row_index):
     position_rows = _array_rows(
         paint_spline_result,
         "paint_trajectory_position_rows",
@@ -162,87 +154,23 @@ def _row_arrays(paint_spline_result, row_index, control_dt):
         return None
 
     count = len(positions)
-    time_rows = _array_rows(
-        paint_spline_result,
-        "paint_trajectory_time_rows",
-        "paint_spline_time_rows",
-    )
     arc_rows = _array_rows(
         paint_spline_result,
         "paint_trajectory_arc_length_rows",
         "paint_spline_arc_length_rows",
-    )
-    linear_velocity_rows = _array_rows(
-        paint_spline_result,
-        "paint_trajectory_linear_velocity_rows_world",
-        "paint_spline_linear_velocity_rows_world",
-    )
-    angular_velocity_rows = _array_rows(
-        paint_spline_result,
-        "paint_trajectory_angular_velocity_rows_world",
-        "paint_spline_angular_velocity_rows_world",
-    )
-    path_speed_rows = _array_rows(
-        paint_spline_result,
-        "paint_trajectory_path_speed_rows",
-        "paint_spline_path_speed_rows",
-    )
-    path_acceleration_rows = _array_rows(
-        paint_spline_result,
-        "paint_trajectory_path_acceleration_rows",
-        "paint_spline_path_acceleration_rows",
-    )
-
-    times = (
-        np.asarray(time_rows[row_index], float).reshape(-1)
-        if row_index < len(time_rows)
-        else np.arange(count, dtype=float) * float(control_dt)
     )
     arcs = (
         np.asarray(arc_rows[row_index], float).reshape(-1)
         if row_index < len(arc_rows)
         else _polyline_arclength(positions)
     )
-    linear_velocities = (
-        np.asarray(linear_velocity_rows[row_index], float)
-        if row_index < len(linear_velocity_rows)
-        else np.zeros((count, 3), dtype=float)
-    )
-    angular_velocities = (
-        np.asarray(angular_velocity_rows[row_index], float)
-        if row_index < len(angular_velocity_rows)
-        else np.zeros((count, 3), dtype=float)
-    )
-    path_speeds = (
-        np.asarray(path_speed_rows[row_index], float).reshape(-1)
-        if row_index < len(path_speed_rows)
-        else np.zeros(count, dtype=float)
-    )
-    path_accelerations = (
-        np.asarray(path_acceleration_rows[row_index], float).reshape(-1)
-        if row_index < len(path_acceleration_rows)
-        else np.zeros(count, dtype=float)
-    )
-
-    if (
-        len(times) != count
-        or len(arcs) != count
-        or linear_velocities.shape != (count, 3)
-        or angular_velocities.shape != (count, 3)
-        or len(path_speeds) != count
-        or len(path_accelerations) != count
-    ):
+    if len(arcs) != count:
         return None
 
     return {
-        "times": times,
         "arcs": arcs,
         "positions": positions,
         "orientations": orientations,
-        "linear_velocities": linear_velocities,
-        "angular_velocities": angular_velocities,
-        "path_speeds": path_speeds,
-        "path_accelerations": path_accelerations,
         "paint_mask": paint_mask,
     }
 
@@ -251,12 +179,6 @@ def structure_painting_trajectory(
     paint_spline_result,
     frame_id="world",
 ):
-    control_dt = float(paint_spline_result.get("paint_trajectory_control_dt", 0.0))
-    desired_speed = float(paint_spline_result.get("paint_trajectory_desired_speed", 0.0))
-    max_acceleration = float(
-        paint_spline_result.get("paint_trajectory_max_acceleration", 0.0)
-    )
-
     position_rows = _array_rows(
         paint_spline_result,
         "paint_trajectory_position_rows",
@@ -281,42 +203,26 @@ def structure_painting_trajectory(
         arrays = _row_arrays(
             paint_spline_result,
             source_row_index,
-            control_dt=control_dt,
         )
         if arrays is None:
             continue
 
         points = [
             TrajectoryPoint(
-                t=float(t),
                 s=float(s),
                 position=_as_vec3(position),
                 orientation=_as_quat(orientation),
-                linear_velocity=_as_vec3(linear_velocity),
-                angular_velocity=_as_vec3(angular_velocity),
-                path_speed=float(path_speed),
-                path_acceleration=float(path_acceleration),
                 paint=bool(paint),
             )
             for (
-                t,
                 s,
                 position,
                 orientation,
-                linear_velocity,
-                angular_velocity,
-                path_speed,
-                path_acceleration,
                 paint,
             ) in zip(
-                arrays["times"],
                 arrays["arcs"],
                 arrays["positions"],
                 arrays["orientations"],
-                arrays["linear_velocities"],
-                arrays["angular_velocities"],
-                arrays["path_speeds"],
-                arrays["path_accelerations"],
                 arrays["paint_mask"],
             )
         ]
@@ -324,9 +230,6 @@ def structure_painting_trajectory(
 
     return PaintTrajectory(
         frame_id=str(frame_id),
-        control_dt=control_dt,
-        desired_speed=desired_speed,
-        max_acceleration=max_acceleration,
         rows=rows,
     )
 

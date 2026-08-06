@@ -14,17 +14,66 @@ from typing import Any
 
 # 변환할 CSV와 저장할 JSON 경로를 한 쌍씩 추가합니다.
 CONVERSION_JOBS: list[dict[str, Any]] = [
-    # {
-    #     "csv_path": Path(
-    #         "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
-    #         "path_planner/test/data/reference_path_requirements/front_hood/"
-    #         "solid_pearl_default/test/painting_trajectory.csv"
-    #     ),
-    #     "output_path": Path(
-    #         "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
-    #         "path_planner/test/data/converted/front_hood.json"
-    #     ),
-    # },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "ES300h_front_bumper/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/ES300h_front_bumper.json"
+        ),
+    },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "ES300h_hood/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/ES300h_hood.json"
+        ),
+    },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "ES300h_left_fender/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/ES300h_left_fender.json"
+        ),
+    },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "ES300h_trunk/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/ES300h_trunk.json"
+        ),
+    },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "NX350h_right_fender/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/NX350h_right_fender.json"
+        ),
+    },
+    {
+        "csv_path": Path(
+            "/home/oms/vehicle_painting_robot/painting_trajectory_planner/"
+            "/path_planner/test/csv/"
+            "Tesla_Model_Y_front_bumper/painting_trajectory.csv"
+        ),
+        "output_path": Path(
+            "/home/oms/temporary/Tesla_Model_Y_front_bumper.json"
+        ),
+    },
 ]
 
 

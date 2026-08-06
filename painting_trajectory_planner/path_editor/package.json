@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:standalone": "npm run build && python3 standalone_html/build_standalone.py --skip-frontend-build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
