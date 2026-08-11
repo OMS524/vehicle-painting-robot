@@ -21,6 +21,7 @@ import type {
   EditableControlPoint,
   LayerVisibility,
   ScanInfo,
+  TransformGizmoMode,
   TrajectoryDataset,
   Vector3Tuple,
   VisualizationSettings,
@@ -254,6 +255,7 @@ export default function App() {
   const [trajectory, setTrajectory] = useState<TrajectoryDataset | null>(null);
   const [controlPoints, setControlPoints] = useState<EditableControlPoint[]>([]);
   const [selectedControlPointId, setSelectedControlPointId] = useState<string | null>(null);
+  const [transformGizmoMode, setTransformGizmoMode] = useState<TransformGizmoMode>("translate");
   const [deletedRowIndices, setDeletedRowIndices] = useState<number[]>([]);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [dirty, setDirty] = useState(false);
@@ -385,7 +387,7 @@ export default function App() {
     ]);
     setTrajectory(parseTrajectoryCsv(trajectoryBuffer));
     setControlPoints(controls.points);
-    setSelectedControlPointId(controls.points[0]?.id ?? null);
+    setSelectedControlPointId(null);
     setDeletedRowIndices([]);
   };
 
@@ -428,6 +430,13 @@ export default function App() {
       ...point,
       position: projectToPlane(position, point),
     }));
+  };
+
+  const rotateControlPoint = (
+    id: string,
+    orientation: [number, number, number, number],
+  ) => {
+    updateControlPoint(id, (point) => ({ ...point, orientation }));
   };
 
   const setSelectedPositionAxis = (axis: number, valueMm: number) => {
@@ -491,9 +500,9 @@ export default function App() {
       setControlPoints(controls.points);
       setDeletedRowIndices([]);
       setSelectedControlPointId(
-        controls.points.some((point) => point.id === selectedId)
+        selectedId && controls.points.some((point) => point.id === selectedId)
           ? selectedId
-          : controls.points[0]?.id ?? null,
+          : null,
       );
       setDirty(false);
       setStatus(
@@ -640,6 +649,29 @@ export default function App() {
               <strong>Row {selectedControlPoint.rowIndex}</strong>
               <span>Point {selectedControlPoint.pointIndex}</span>
             </div>
+            <div className="transform-gizmo-mode" data-preserve-point-selection>
+              <button
+                type="button"
+                className={transformGizmoMode === "translate" ? "active" : ""}
+                disabled={Boolean(busy)}
+                onClick={() => setTransformGizmoMode("translate")}
+              >
+                이동
+              </button>
+              <button
+                type="button"
+                className={transformGizmoMode === "rotate" ? "active" : ""}
+                disabled={Boolean(busy)}
+                onClick={() => setTransformGizmoMode("rotate")}
+              >
+                회전
+              </button>
+              <p>
+                {transformGizmoMode === "translate"
+                  ? "Scene의 빨강·초록 화살표를 드래그하여 슬라이싱 평면의 두 축으로 이동합니다."
+                  : "Scene의 빨강·초록·파랑 링을 드래그하여 세 축으로 회전합니다."}
+              </p>
+            </div>
             <div className="transform-section" data-preserve-point-selection>
               <h3>위치 <em>mm</em></h3>
               <div className="transform-grid">
@@ -777,7 +809,7 @@ export default function App() {
                 <Toggle checked={layers.trajectory} label="Spray ON path" color="#20e66a" onChange={(value) => setLayer("trajectory", value)} />
                 <Toggle checked={layers.sprayOff} label="Spray OFF path" color="#ffc857" onChange={(value) => setLayer("sprayOff", value)} />
                 <Toggle checked={layers.sprayDirections} label="Spray directions" color="#4cc9f0" onChange={(value) => setLayer("sprayDirections", value)} />
-                <Toggle checked={layers.controlPoints} label="Editable path points" color="#ff4fa3" onChange={(value) => setLayer("controlPoints", value)} />
+                <Toggle checked={layers.controlPoints} label="Path points" color="#ff4fa3" onChange={(value) => setLayer("controlPoints", value)} />
                 <Toggle checked={layers.axes} label="Coordinate axes" onChange={(value) => setLayer("axes", value)} />
               </div>
             </Foldout>
@@ -817,10 +849,12 @@ export default function App() {
               controlPoints={controlPoints}
               selectedControlPointId={selectedControlPointId}
               editingEnabled={step === 3 && !busy && !standalone}
+              transformGizmoMode={transformGizmoMode}
               layers={layers}
               visualization={visualization}
               onSelectControlPoint={setSelectedControlPointId}
               onMoveControlPoint={moveControlPoint}
+              onRotateControlPoint={rotateControlPoint}
             />
             {!scanBuffer && (
               <div className="empty-scene"><span>01</span><strong>스캔 데이터를 불러오세요</strong><p>오른쪽 공정 패널에서 PLY 또는 CSV 파일을 선택합니다.</p></div>
@@ -834,7 +868,6 @@ export default function App() {
         <aside className="right-panel panel workstation-inspector">
           <div className="panel-titlebar inspector-titlebar"><span className="panel-title-icon">☷</span><strong>Process Inspector</strong><span className="panel-menu">⋮</span></div>
           <div className="process-scroll">{renderRightPanel()}</div>
-          {error && <div className="inline-error"><strong>오류</strong><span>{error}</span></div>}
         </aside>
       </section>
 
@@ -843,6 +876,30 @@ export default function App() {
         <span>{status}</span>
         <span className="status-version">Workstation v0.2.0 · {dirty ? "MODIFIED" : "READY"}</span>
       </footer>
+
+      {error && (
+        <div className="error-log-backdrop" role="presentation">
+          <section
+            className="error-log-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="error-log-title"
+          >
+            <header>
+              <div>
+                <span>BACKEND ERROR</span>
+                <strong id="error-log-title">오류 로그</strong>
+              </div>
+              <button type="button" aria-label="오류 로그 닫기" onClick={() => setError("")}>×</button>
+            </header>
+            <pre>{error}</pre>
+            <div className="error-log-actions">
+              <p>백엔드에서 전달된 오류 내용을 그대로 표시합니다.</p>
+              <button type="button" onClick={() => setError("")}>닫기</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

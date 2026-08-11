@@ -1,0 +1,6 @@
+{
+  "completedAt": "2026-08-10T12:13:28+09:00",
+  "scanFile": "ES300h_trunk.ply",
+  "trajectoryFile": "painting_trajectory.csv",
+  "outputDirectory": "/home/oms/vehicle_painting_robot/painting_trajectory_planner/path_planner/log/20260810_121328"
+}

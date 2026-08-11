@@ -1,5 +1,6 @@
 export type Vector3Tuple = [number, number, number];
 export type QuaternionTuple = [number, number, number, number];
+export type TransformGizmoMode = "translate" | "rotate";
 
 export interface TrajectoryPoint {
   id: string;

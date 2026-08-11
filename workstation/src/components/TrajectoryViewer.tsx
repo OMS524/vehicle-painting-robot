@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 import type {
   EditableControlPoint,
   LayerVisibility,
+  QuaternionTuple,
+  TransformGizmoMode,
   TrajectoryDataset,
   VisualizationSettings,
 } from "../types";
@@ -16,17 +19,21 @@ interface TrajectoryViewerProps {
   controlPoints: EditableControlPoint[];
   selectedControlPointId: string | null;
   editingEnabled: boolean;
+  transformGizmoMode: TransformGizmoMode;
   layers: LayerVisibility;
   visualization: VisualizationSettings;
   onSelectControlPoint: (id: string | null) => void;
   onMoveControlPoint: (id: string, position: [number, number, number]) => void;
+  onRotateControlPoint: (id: string, orientation: QuaternionTuple) => void;
 }
 
-interface DragState {
+interface GizmoDragState {
   point: EditableControlPoint;
   controlPointIndex: number;
-  plane: THREE.Plane;
-  offset: THREE.Vector3;
+  mode: TransformGizmoMode;
+  frameQuaternion: THREE.Quaternion;
+  startOrientation: THREE.Quaternion;
+  resultOrientation: THREE.Quaternion;
   moved: boolean;
 }
 
@@ -39,10 +46,13 @@ interface ViewerRuntime {
   pathGroup: THREE.Group;
   sprayOffGroup: THREE.Group;
   sprayDirectionGroup: THREE.Group;
+  trajectoryPointGroup: THREE.Group;
   controlPointGroup: THREE.Group;
   editPlaneGroup: THREE.Group;
+  transformControls: TransformControls;
+  transformTarget: THREE.Object3D;
   controlPointData: EditableControlPoint[];
-  dragState: DragState | null;
+  gizmoDragState: GizmoDragState | null;
   axes: THREE.AxesHelper;
   hemisphereLight: THREE.HemisphereLight;
   keyLight: THREE.DirectionalLight;
@@ -129,6 +139,12 @@ interface DirectionSample {
   paint: boolean;
 }
 
+const PATH_POINT_SPHERE_RADIUS = 0.007;
+
+function createPathPointSphereGeometry(): THREE.SphereGeometry {
+  return new THREE.SphereGeometry(PATH_POINT_SPHERE_RADIUS, 12, 8);
+}
+
 function buildDirectionGlyphs(
   samples: readonly DirectionSample[],
   opacity = 0.82,
@@ -187,6 +203,28 @@ function buildSprayDirections(trajectory: TrajectoryDataset): THREE.Group {
   return buildDirectionGlyphs(trajectory.rows.flatMap((row) => row.points));
 }
 
+function buildTrajectoryPointSpheres(trajectory: TrajectoryDataset): THREE.InstancedMesh {
+  const points = trajectory.rows.flatMap((row) => row.points);
+  const geometry = createPathPointSphereGeometry();
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xff4fa3,
+    transparent: true,
+    opacity: 0.96,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const spheres = new THREE.InstancedMesh(geometry, material, points.length);
+  const matrix = new THREE.Matrix4();
+  for (let index = 0; index < points.length; index += 1) {
+    matrix.makeTranslation(...points[index].position);
+    spheres.setMatrixAt(index, matrix);
+  }
+  spheres.instanceMatrix.needsUpdate = true;
+  spheres.computeBoundingSphere();
+  spheres.renderOrder = 7;
+  return spheres;
+}
+
 function buildEditableDirections(
   points: EditableControlPoint[],
   selectedRowIndex: number | null,
@@ -235,34 +273,61 @@ function buildControlPointObject(
   selectedId: string | null,
   opacity: number,
   renderOrder: number,
-): THREE.Points {
+): THREE.Group {
   const positions: number[] = [];
-  const colors: number[] = [];
   const normalColor = new THREE.Color(0xff4fa3);
   const selectedColor = new THREE.Color(0xffffff);
-  for (const pointIndex of pointIndices) {
+  const sphereGeometry = createPathPointSphereGeometry();
+  const sphereMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const spheres = new THREE.InstancedMesh(
+    sphereGeometry,
+    sphereMaterial,
+    pointIndices.length,
+  );
+  const matrix = new THREE.Matrix4();
+  for (let geometryIndex = 0; geometryIndex < pointIndices.length; geometryIndex += 1) {
+    const pointIndex = pointIndices[geometryIndex];
     const point = points[pointIndex];
     positions.push(...point.position);
     const color = point.id === selectedId ? selectedColor : normalColor;
-    colors.push(color.r, color.g, color.b);
+    matrix.makeTranslation(...point.position);
+    spheres.setMatrixAt(geometryIndex, matrix);
+    spheres.setColorAt(geometryIndex, color);
   }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const controlPointObject = new THREE.Points(
-    geometry,
+  spheres.instanceMatrix.needsUpdate = true;
+  if (spheres.instanceColor) {
+    spheres.instanceColor.needsUpdate = true;
+  }
+  spheres.frustumCulled = false;
+  spheres.renderOrder = renderOrder;
+  spheres.userData.controlPointVisual = true;
+
+  const pickerGeometry = new THREE.BufferGeometry();
+  pickerGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const picker = new THREE.Points(
+    pickerGeometry,
     new THREE.PointsMaterial({
-      vertexColors: true,
-      size: 0.022,
-      sizeAttenuation: true,
+      size: 0.001,
       depthTest: false,
+      depthWrite: false,
       transparent: true,
-      opacity,
+      opacity: 0,
+      colorWrite: false,
     }),
   );
-  controlPointObject.userData.controlPointIndices = pointIndices;
-  controlPointObject.renderOrder = renderOrder;
-  return controlPointObject;
+  picker.userData.controlPointIndices = pointIndices;
+  picker.userData.controlPointPicker = true;
+
+  const pointGroup = new THREE.Group();
+  pointGroup.userData.controlPointIndices = pointIndices;
+  pointGroup.add(spheres, picker);
+  return pointGroup;
 }
 
 function addControlPointObjects(
@@ -293,18 +358,107 @@ function addControlPointObjects(
 function renderedControlPoint(
   runtime: ViewerRuntime,
   controlPointIndex: number,
-): { object: THREE.Points; geometryIndex: number } | null {
+): {
+  picker: THREE.Points;
+  spheres: THREE.InstancedMesh;
+  geometryIndex: number;
+} | null {
   for (const child of runtime.controlPointGroup.children) {
-    if (!(child instanceof THREE.Points)) {
-      continue;
-    }
     const indices = child.userData.controlPointIndices as number[] | undefined;
     const geometryIndex = indices?.indexOf(controlPointIndex) ?? -1;
-    if (geometryIndex >= 0) {
-      return { object: child, geometryIndex };
+    if (geometryIndex < 0) {
+      continue;
+    }
+    const picker = child.children.find(
+      (candidate): candidate is THREE.Points => (
+        candidate instanceof THREE.Points && candidate.userData.controlPointPicker === true
+      ),
+    );
+    const spheres = child.children.find(
+      (candidate): candidate is THREE.InstancedMesh => (
+        candidate instanceof THREE.InstancedMesh && candidate.userData.controlPointVisual === true
+      ),
+    );
+    if (picker && spheres) {
+      return { picker, spheres, geometryIndex };
     }
   }
   return null;
+}
+
+function planeFrameQuaternion(
+  point: EditableControlPoint,
+  trajectory: TrajectoryDataset | null,
+): THREE.Quaternion {
+  const normal = new THREE.Vector3(...point.planeNormal).normalize();
+  const row = trajectory?.rows.find((candidate) => candidate.rowIndex === point.rowIndex);
+  let xAxis = new THREE.Vector3();
+  if (row && row.points.length >= 2) {
+    const matchingIndex = row.points.findIndex(
+      (candidate) => candidate.pointId === point.pointIndex,
+    );
+    const index = matchingIndex >= 0
+      ? matchingIndex
+      : Math.min(Math.max(point.pointIndex, 0), row.points.length - 1);
+    const previous = row.points[Math.max(0, index - 1)];
+    const next = row.points[Math.min(row.points.length - 1, index + 1)];
+    xAxis = new THREE.Vector3(...next.position).sub(new THREE.Vector3(...previous.position));
+    xAxis.addScaledVector(normal, -xAxis.dot(normal));
+  }
+  if (xAxis.lengthSq() <= 1.0e-12) {
+    const reference = Math.abs(normal.z) < 0.9
+      ? new THREE.Vector3(0, 0, 1)
+      : new THREE.Vector3(0, 1, 0);
+    xAxis.copy(reference).cross(normal);
+  }
+  xAxis.normalize();
+  const yAxis = normal.clone().cross(xAxis).normalize();
+  const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, normal);
+  return new THREE.Quaternion().setFromRotationMatrix(basis).normalize();
+}
+
+function restrictTransformHandles(transformControls: TransformControls): void {
+  const internals = transformControls as unknown as {
+    _gizmo: {
+      gizmo: Record<TransformGizmoMode, THREE.Object3D>;
+      picker: Record<TransformGizmoMode, THREE.Object3D>;
+    };
+  };
+  const keepOnly = (root: THREE.Object3D, allowed: Set<string>) => {
+    for (const child of [...root.children]) {
+      if (!allowed.has(child.name)) {
+        root.remove(child);
+      }
+    }
+  };
+  const removeNegativeTranslateHandles = (root: THREE.Object3D) => {
+    for (const child of [...root.children]) {
+      if (!(child instanceof THREE.Mesh) || (child.name !== "X" && child.name !== "Y")) {
+        continue;
+      }
+      child.geometry.computeBoundingBox();
+      const center = child.geometry.boundingBox?.getCenter(new THREE.Vector3());
+      const axisCenter = child.name === "X" ? center?.x : center?.y;
+      if (axisCenter !== undefined && axisCenter < -1.0e-6) {
+        root.remove(child);
+      }
+    }
+  };
+  const translateAxes = new Set(["X", "Y"]);
+  const rotateAxes = new Set(["X", "Y", "Z"]);
+  keepOnly(internals._gizmo.gizmo.translate, translateAxes);
+  keepOnly(internals._gizmo.picker.translate, translateAxes);
+  removeNegativeTranslateHandles(internals._gizmo.gizmo.translate);
+  removeNegativeTranslateHandles(internals._gizmo.picker.translate);
+  keepOnly(internals._gizmo.gizmo.rotate, rotateAxes);
+  keepOnly(internals._gizmo.picker.rotate, rotateAxes);
+}
+
+function transformedOrientation(drag: GizmoDragState, target: THREE.Object3D): THREE.Quaternion {
+  const worldDelta = target.quaternion
+    .clone()
+    .multiply(drag.frameQuaternion.clone().invert());
+  return worldDelta.multiply(drag.startOrientation).normalize();
 }
 
 function showEditingPlane(
@@ -414,10 +568,12 @@ export function TrajectoryViewer({
   controlPoints,
   selectedControlPointId,
   editingEnabled,
+  transformGizmoMode,
   layers,
   visualization,
   onSelectControlPoint,
   onMoveControlPoint,
+  onRotateControlPoint,
 }: TrajectoryViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<ViewerRuntime | null>(null);
@@ -425,8 +581,14 @@ export function TrajectoryViewer({
     editingEnabled,
     onSelectControlPoint,
     onMoveControlPoint,
+    onRotateControlPoint,
   });
-  interactionRef.current = { editingEnabled, onSelectControlPoint, onMoveControlPoint };
+  interactionRef.current = {
+    editingEnabled,
+    onSelectControlPoint,
+    onMoveControlPoint,
+    onRotateControlPoint,
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -463,8 +625,17 @@ export function TrajectoryViewer({
     const pathGroup = new THREE.Group();
     const sprayOffGroup = new THREE.Group();
     const sprayDirectionGroup = new THREE.Group();
+    const trajectoryPointGroup = new THREE.Group();
     const controlPointGroup = new THREE.Group();
     const editPlaneGroup = new THREE.Group();
+    const transformTarget = new THREE.Object3D();
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    restrictTransformHandles(transformControls);
+    transformControls.setSpace("local");
+    transformControls.setSize(0.82);
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = false;
     controlPointGroup.renderOrder = 10;
     editPlaneGroup.renderOrder = 5;
     const axes = new THREE.AxesHelper(0.35);
@@ -473,8 +644,11 @@ export function TrajectoryViewer({
       pathGroup,
       sprayOffGroup,
       sprayDirectionGroup,
+      trajectoryPointGroup,
       editPlaneGroup,
       controlPointGroup,
+      transformTarget,
+      transformControls.getHelper(),
       axes,
     );
 
@@ -487,10 +661,13 @@ export function TrajectoryViewer({
       pathGroup,
       sprayOffGroup,
       sprayDirectionGroup,
+      trajectoryPointGroup,
       controlPointGroup,
       editPlaneGroup,
+      transformControls,
+      transformTarget,
       controlPointData: [],
-      dragState: null,
+      gizmoDragState: null,
       axes,
       hemisphereLight,
       keyLight,
@@ -512,8 +689,96 @@ export function TrajectoryViewer({
       );
       raycaster.setFromCamera(pointer, camera);
     };
+
+    const transformDraggingChanged = (event: { value: unknown }) => {
+      controls.enabled = !Boolean(event.value);
+    };
+    const transformMouseDown = () => {
+      const pointId = transformTarget.userData.controlPointId as string | undefined;
+      const controlPointIndex = runtime.controlPointData.findIndex(
+        (point) => point.id === pointId,
+      );
+      const point = runtime.controlPointData[controlPointIndex];
+      const frameQuaternion = transformTarget.userData.frameQuaternion as
+        | THREE.Quaternion
+        | undefined;
+      const mode = transformControls.getMode();
+      if (
+        !point
+        || !frameQuaternion
+        || (mode !== "translate" && mode !== "rotate")
+      ) {
+        return;
+      }
+      const orientation = new THREE.Quaternion(...point.orientation).normalize();
+      runtime.gizmoDragState = {
+        point,
+        controlPointIndex,
+        mode,
+        frameQuaternion: frameQuaternion.clone(),
+        startOrientation: orientation,
+        resultOrientation: orientation.clone(),
+        moved: false,
+      };
+    };
+    const transformObjectChange = () => {
+      const drag = runtime.gizmoDragState;
+      if (!drag) {
+        return;
+      }
+      drag.moved = true;
+      if (drag.mode === "translate") {
+        const rendered = renderedControlPoint(runtime, drag.controlPointIndex);
+        if (rendered) {
+          const positions = rendered.picker.geometry.getAttribute("position") as THREE.BufferAttribute;
+          positions.setXYZ(
+            rendered.geometryIndex,
+            transformTarget.position.x,
+            transformTarget.position.y,
+            transformTarget.position.z,
+          );
+          positions.needsUpdate = true;
+          const matrix = new THREE.Matrix4().makeTranslation(
+            transformTarget.position.x,
+            transformTarget.position.y,
+            transformTarget.position.z,
+          );
+          rendered.spheres.setMatrixAt(rendered.geometryIndex, matrix);
+          rendered.spheres.instanceMatrix.needsUpdate = true;
+        }
+      } else {
+        drag.resultOrientation.copy(transformedOrientation(drag, transformTarget));
+      }
+    };
+    const transformMouseUp = () => {
+      const drag = runtime.gizmoDragState;
+      runtime.gizmoDragState = null;
+      if (!drag?.moved) {
+        return;
+      }
+      if (drag.mode === "translate") {
+        interactionRef.current.onMoveControlPoint(drag.point.id, [
+          transformTarget.position.x,
+          transformTarget.position.y,
+          transformTarget.position.z,
+        ]);
+      } else {
+        interactionRef.current.onRotateControlPoint(
+          drag.point.id,
+          drag.resultOrientation.toArray(),
+        );
+      }
+    };
+    transformControls.addEventListener("dragging-changed", transformDraggingChanged);
+    transformControls.addEventListener("mouseDown", transformMouseDown);
+    transformControls.addEventListener("objectChange", transformObjectChange);
+    transformControls.addEventListener("mouseUp", transformMouseUp);
+
     const pointerDown = (event: PointerEvent) => {
       if (!interactionRef.current.editingEnabled || !runtime.controlPointGroup.visible) {
+        return;
+      }
+      if (event.button !== 0 || transformControls.dragging || transformControls.axis !== null) {
         return;
       }
       updateRay(event);
@@ -536,66 +801,8 @@ export function TrajectoryViewer({
         return;
       }
       interactionRef.current.onSelectControlPoint(point.id);
-      const normal = new THREE.Vector3(...point.planeNormal).normalize();
-      const origin = new THREE.Vector3(...point.planeOrigin);
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin);
-      const planeHit = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
-      const pointPosition = new THREE.Vector3(...point.position);
-      runtime.dragState = {
-        point,
-        controlPointIndex,
-        plane,
-        offset: planeHit ? pointPosition.sub(planeHit) : new THREE.Vector3(),
-        moved: false,
-      };
-      runtime.controls.enabled = false;
-      renderer.domElement.setPointerCapture(event.pointerId);
-      event.preventDefault();
-    };
-    const pointerMove = (event: PointerEvent) => {
-      const drag = runtime.dragState;
-      if (!drag) {
-        return;
-      }
-      updateRay(event);
-      const hit = raycaster.ray.intersectPlane(drag.plane, new THREE.Vector3());
-      if (!hit) {
-        return;
-      }
-      hit.add(drag.offset);
-      drag.moved = drag.moved
-        || hit.distanceToSquared(new THREE.Vector3(...drag.point.position)) > 1.0e-12;
-      const rendered = renderedControlPoint(runtime, drag.controlPointIndex);
-      if (drag.moved && rendered) {
-        const positions = rendered.object.geometry.getAttribute("position") as THREE.BufferAttribute;
-        positions.setXYZ(rendered.geometryIndex, hit.x, hit.y, hit.z);
-        positions.needsUpdate = true;
-      }
-    };
-    const pointerUp = (event: PointerEvent) => {
-      const drag = runtime.dragState;
-      if (!drag) {
-        return;
-      }
-      const rendered = renderedControlPoint(runtime, drag.controlPointIndex);
-      if (rendered) {
-        const positions = rendered.object.geometry.getAttribute("position") as THREE.BufferAttribute;
-        interactionRef.current.onMoveControlPoint(drag.point.id, [
-          positions.getX(rendered.geometryIndex),
-          positions.getY(rendered.geometryIndex),
-          positions.getZ(rendered.geometryIndex),
-        ]);
-      }
-      runtime.dragState = null;
-      runtime.controls.enabled = true;
-      if (renderer.domElement.hasPointerCapture(event.pointerId)) {
-        renderer.domElement.releasePointerCapture(event.pointerId);
-      }
     };
     renderer.domElement.addEventListener("pointerdown", pointerDown);
-    renderer.domElement.addEventListener("pointermove", pointerMove);
-    renderer.domElement.addEventListener("pointerup", pointerUp);
-    renderer.domElement.addEventListener("pointercancel", pointerUp);
 
     const resize = () => {
       const width = Math.max(container.clientWidth, 1);
@@ -623,11 +830,14 @@ export function TrajectoryViewer({
       cancelAnimationFrame(runtime.animationFrame);
       runtime.resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", pointerDown);
-      renderer.domElement.removeEventListener("pointermove", pointerMove);
-      renderer.domElement.removeEventListener("pointerup", pointerUp);
-      renderer.domElement.removeEventListener("pointercancel", pointerUp);
+      transformControls.removeEventListener("dragging-changed", transformDraggingChanged);
+      transformControls.removeEventListener("mouseDown", transformMouseDown);
+      transformControls.removeEventListener("objectChange", transformObjectChange);
+      transformControls.removeEventListener("mouseUp", transformMouseUp);
+      transformControls.detach();
+      transformControls.dispose();
       controls.dispose();
-      for (const group of [surfaceGroup, pathGroup, sprayOffGroup, sprayDirectionGroup, controlPointGroup, editPlaneGroup]) {
+      for (const group of [surfaceGroup, pathGroup, sprayOffGroup, sprayDirectionGroup, trajectoryPointGroup, controlPointGroup, editPlaneGroup]) {
         clearGroup(group);
       }
       renderer.dispose();
@@ -675,8 +885,13 @@ export function TrajectoryViewer({
       );
     }
     runtime.surfaceGroup.add(surface);
-    fitCamera(runtime);
   }, [surfaceBuffer, surfaceFileName, visualization.surfaceStyle]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || !surfaceBuffer) return;
+    fitCamera(runtime);
+  }, [surfaceBuffer, surfaceFileName]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -697,9 +912,9 @@ export function TrajectoryViewer({
     clearGroup(runtime.pathGroup);
     clearGroup(runtime.sprayOffGroup);
     if (!trajectory) return;
-    const selectedRowIndex = controlPoints.find(
-      (point) => point.id === selectedControlPointId,
-    )?.rowIndex ?? null;
+    const selectedRowIndex = editingEnabled
+      ? controlPoints.find((point) => point.id === selectedControlPointId)?.rowIndex ?? null
+      : null;
     if (selectedRowIndex === null) {
       runtime.pathGroup.add(new THREE.LineSegments(
         buildTrajectorySegments(trajectory, true),
@@ -763,8 +978,16 @@ export function TrajectoryViewer({
         selectedSprayOffPath,
       );
     }
-    fitCamera(runtime);
-  }, [trajectory, controlPoints, selectedControlPointId]);
+  }, [trajectory, controlPoints, selectedControlPointId, editingEnabled]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    clearGroup(runtime.trajectoryPointGroup);
+    if (trajectory) {
+      runtime.trajectoryPointGroup.add(buildTrajectoryPointSpheres(trajectory));
+    }
+  }, [trajectory]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -807,11 +1030,46 @@ export function TrajectoryViewer({
 
   useEffect(() => {
     const runtime = runtimeRef.current;
+    if (!runtime || runtime.transformControls.dragging) return;
+    const point = editingEnabled && layers.controlPoints
+      ? controlPoints.find((candidate) => candidate.id === selectedControlPointId)
+      : undefined;
+    if (!point) {
+      runtime.transformControls.detach();
+      runtime.transformControls.enabled = false;
+      runtime.transformTarget.userData = {};
+      return;
+    }
+    const frameQuaternion = planeFrameQuaternion(point, trajectory);
+    runtime.transformTarget.position.fromArray(point.position);
+    runtime.transformTarget.quaternion.copy(frameQuaternion);
+    runtime.transformTarget.userData = {
+      controlPointId: point.id,
+      frameQuaternion: frameQuaternion.clone(),
+    };
+    runtime.transformTarget.updateMatrixWorld(true);
+    runtime.transformControls.enabled = true;
+    runtime.transformControls.setMode(transformGizmoMode);
+    runtime.transformControls.setSpace("local");
+    runtime.transformControls.showZ = transformGizmoMode === "rotate";
+    runtime.transformControls.attach(runtime.transformTarget);
+  }, [
+    controlPoints,
+    selectedControlPointId,
+    trajectory,
+    editingEnabled,
+    layers.controlPoints,
+    transformGizmoMode,
+  ]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.surfaceGroup.visible = layers.surface;
     runtime.pathGroup.visible = layers.trajectory;
     runtime.sprayOffGroup.visible = layers.trajectory && layers.sprayOff;
     runtime.sprayDirectionGroup.visible = layers.sprayDirections;
+    runtime.trajectoryPointGroup.visible = layers.controlPoints && !editingEnabled;
     runtime.controlPointGroup.visible = layers.controlPoints && editingEnabled;
     runtime.editPlaneGroup.visible = layers.controlPoints && editingEnabled;
     runtime.axes.visible = layers.axes;
@@ -838,7 +1096,11 @@ export function TrajectoryViewer({
       </div>
       <div className="viewer-hint">
         {editingEnabled
-          ? "포인트 선택/이동: 좌클릭 드래그 · 이동은 현재 슬라이싱 평면으로 제한"
+          ? selectedControlPointId
+            ? transformGizmoMode === "translate"
+              ? "이동: 빨강·초록 화살표 드래그 · Scene 회전: 빈 공간 좌클릭 드래그"
+              : "회전: 빨강·초록·파랑 링 드래그 · Scene 회전: 빈 공간 좌클릭 드래그"
+            : "편집할 포인트를 클릭하여 이동 2축·회전 3축 Transform Gizmo를 표시합니다."
           : "회전: 좌클릭 · 이동: 우클릭 · 확대: 휠"}
       </div>
     </div>

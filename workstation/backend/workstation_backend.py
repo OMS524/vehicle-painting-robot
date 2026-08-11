@@ -13,6 +13,7 @@ import json
 import pickle
 import shutil
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -649,6 +650,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except Exception as error:
-        print(f"{type(error).__name__}: {error}", file=sys.stderr)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
         raise SystemExit(1)
