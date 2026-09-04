@@ -566,15 +566,17 @@ def regenerate(request: dict[str, Any]) -> dict[str, Any]:
     )
     config = PaintingTrajectoryConfig.from_dict(state.get("_workstation_config"))
     regenerated = generate_spline(state, **config.spline.to_kwargs())
-    if deleted_rows_source:
-        controls = _control_points_from_state(regenerated)
-        regenerated["_workstation_edit_controls"] = controls
-        regenerated["_workstation_edit_offset_row_indices"] = (
-            _trajectory_offset_row_indices(regenerated)
-        )
-        regenerated["_workstation_edit_source_row_indices"] = (
-            _structured_source_row_indices(regenerated)
-        )
+    # The submitted controls are spline inputs. Rebuild the edit controls from
+    # the regenerated, uniformly sampled trajectory so the pink points and
+    # direction glyphs shown by the editor match the exported 40 mm path.
+    controls = _control_points_from_state(regenerated)
+    regenerated["_workstation_edit_controls"] = controls
+    regenerated["_workstation_edit_offset_row_indices"] = (
+        _trajectory_offset_row_indices(regenerated)
+    )
+    regenerated["_workstation_edit_source_row_indices"] = (
+        _structured_source_row_indices(regenerated)
+    )
     output_dir = _generated_dir(session_dir)
     painting_trajectory, _ = structure_and_export(
         regenerated,
